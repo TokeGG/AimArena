@@ -1,6 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
+export const VERSION = '0.3.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
@@ -49,26 +50,42 @@ export const DEFAULT_MODEL = 'striker';
 export const SLOW_FACTOR = 0.55;
 
 // ---------------------------------------------------------------- map
+// Every piece below is point-mirrored (x,z) -> (-x,-z), so both teams get the identical layout.
+// Each team spawns in a pocket behind a long "shield wall" with exits at its two corners, so
+// the two spawns can never see each other.
+export const SHIELD_WALL_H = 3.5;
 function buildWalls() {
   const walls = [];
-  const box = (cx, cz, w, d, h) => ({
-    minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, h,
+  const box = (cx, cz, w, d, h, kind = 'cover') => ({
+    minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, h, kind,
   });
-  walls.push(box(0, 0, 4, 4, 3)); // centre pillar
-  // Half the map; every piece is point-mirrored so both teams get an identical layout.
-  const half = [
-    [10, -8, 6, 1.5, 3],
-    [-9, -14, 1.5, 6, 3],
-    [0, -19, 8, 1.5, 1.0], // low wall: jump onto it, shoot over it
-    [15, -19, 2.5, 2.5, 3],
-    [-17, -5, 2.5, 2.5, 3],
-    [5, -4, 1.5, 5, 3],
-    [-4, -9, 3, 1.5, 1.0],
-    [20, -10, 1.5, 8, 3],
+  // centre temple
+  walls.push(box(0, 0, 5, 5, 3.5, 'temple'));
+  // spawn pocket: shield wall + back-side walls (corner exits are 3.4m wide)
+  const spawn = [
+    [0, -19.5, 20, 1.2, SHIELD_WALL_H, 'shield'],
+    [-10.6, -26.75, 1.2, 6.5, SHIELD_WALL_H, 'shield'],
+    [10.6, -26.75, 1.2, 6.5, SHIELD_WALL_H, 'shield'],
   ];
+  // cover on one half of the map
+  const half = [
+    [-20, -12, 6, 1.5, 3],
+    [20, -8, 1.5, 6, 3],
+    [-8, -11, 4, 1.2, 1.0], // low walls: jump onto them, shoot over them
+    [9, -14, 3, 3, 3],
+    [-14, -5, 2.5, 2.5, 3],
+    [6, -6, 1.2, 5, 3],
+    [0, -12, 6, 1.2, 1.0],
+    [-26, -4, 4, 1.5, 3],
+    [26, -15, 4, 1.5, 3],
+  ];
+  for (const [x, z, w, d, h, kind] of spawn) {
+    walls.push(box(x, z, w, d, h, kind));
+    walls.push(box(-x, -z, w, d, h, kind));
+  }
   for (const [x, z, w, d, h] of half) {
-    walls.push(box(x, z, w, d, h));
-    walls.push(box(-x, -z, w, d, h));
+    walls.push(box(x, z, w, d, h, h < 2 ? 'low' : 'cover'));
+    walls.push(box(-x, -z, w, d, h, h < 2 ? 'low' : 'cover'));
   }
   return walls;
 }

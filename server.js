@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Room } from './game.js';
 import { attachWebSocket } from './ws-lite.js';
-import { DT, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT } from './shared/sim.js';
+import { DT, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT, VERSION } from './sim.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -18,20 +18,25 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
+// Only these files are ever served (everything lives in one folder, no subfolders).
+const STATIC_FILES = new Set(['index.html', 'main.js', 'world.js', 'sim.js']);
+
 function resolveFile(urlPath) {
   let p;
   try { p = decodeURIComponent(urlPath.split('?')[0]); } catch { return null; }
   if (p === '/') p = '/index.html';
-  let base, rel;
-  if (p.startsWith('/shared/')) { base = path.join(__dirname, 'shared'); rel = p.slice(8); }
-  else { base = path.join(__dirname, 'public'); rel = p.slice(1); }
-  const full = path.normalize(path.join(base, rel));
-  return full.startsWith(base) ? full : null;
+  const name = p.slice(1);
+  return STATIC_FILES.has(name) ? path.join(__dirname, name) : null;
 }
 
 const server = http.createServer((req, res) => {
+  if ((req.url || '').split('?')[0] === '/version') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+    res.end(JSON.stringify({ version: VERSION }));
+    return;
+  }
   const file = resolveFile(req.url || '/');
-  if (!file) { res.writeHead(400).end('bad request'); return; }
+  if (!file) { res.writeHead(404).end('not found'); return; }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404).end('not found'); return; }
     res.writeHead(200, {
@@ -123,5 +128,5 @@ function broadcast(room) {
 }
 
 server.listen(PORT, () => {
-  console.log(`Aim Arena running on http://localhost:${PORT}`);
+  console.log(`Aim Arena v${VERSION} running on http://localhost:${PORT}`);
 });

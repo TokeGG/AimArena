@@ -50,19 +50,21 @@ Anyone who can reach your server can join the same mode and replaces a bot on a 
 
 Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots.
 
-## Layout
+## Layout (all files sit in one flat folder)
 
 | File | Role |
 |---|---|
-| `shared/sim.js` | Movement, map, raycasts. Used by server and client so prediction matches |
+| `index.html` | Menu (champion + 3 skills) and HUD |
+| `main.js` | Client: rendering, prediction/interpolation, input, HUD logic |
+| `world.js` | Olympus arena visuals (sky, marble, columns, torches) and menu podium |
+| `sim.js` | Movement, map, raycasts, skills/models list. Used by server and client |
 | `game.js` | Room: rounds, hitscan, spells, bot AI |
-| `server.js`, `ws-lite.js` | HTTP + built-in WebSocket server (60 Hz sim, 20 Hz snapshots) |
-| `public/` | Client: rendering, prediction/interpolation, HUD |
-| `test/headless.mjs` | `npm test`: bot-only matches, live WebSocket client, lag compensation, skills |
+| `server.js`, `ws-lite.js` | HTTP + built-in WebSocket server (60 Hz sim, 30 Hz snapshots) |
+| `test/` | `npm test`: bot matches, live WebSocket client, lag compensation, skills, map |
 
 ## Known limits
 
 - Lag compensation rewinds enemies up to 0.4s for shots and Bind. Very high ping (over about 400ms) is still unfair.
 - Players do not collide with each other.
-- One map. Edit `buildWalls()` in `shared/sim.js` (keep it point-mirrored so teams stay fair).
+- One map. Edit `buildWalls()` in `sim.js` (keep it point-mirrored so teams stay fair).
 - No matchmaking, accounts or ranks yet. Rooms are created per mode when someone joins.

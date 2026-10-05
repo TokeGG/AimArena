@@ -1,14 +1,17 @@
 import * as THREE from 'three';
 import {
-  DT, ARENA, WALLS, EYE_H, FIRE_INTERVAL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL,
-  MOVE_SPEED, stepPlayer, lookDir, rayWorld, spawnPoint,
-} from '/shared/sim.js';
+  DT, EYE_H, FIRE_INTERVAL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL,
+  MOVE_SPEED, VERSION, stepPlayer, lookDir, rayWorld, spawnPoint,
+} from '/sim.js';
+import { TEAM_COLOR, buildWorld, buildShowroom, SHOWROOM } from '/world.js';
+
+// Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
+const CLIENT_VERSION = '0.3.0';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
 const INTERP_MS = 80; // render other players this far in the past (snapshots arrive at 30 Hz)
-const TEAM_COLOR = [0x3b82ff, 0xff5436];
 
 // ------------------------------------------------------------------ settings
 const store = {
@@ -21,9 +24,11 @@ const cfg = {
   sens: store.get('sens', 1),
   loadout: store.get('loadout3', DEFAULT_LOADOUT),
   model: store.get('model', DEFAULT_MODEL),
+  quality: store.get('quality', 'high'),
 };
 if (!Array.isArray(cfg.loadout) || cfg.loadout.length > SLOT_COUNT || !cfg.loadout.every((s) => SPELLS[s])) cfg.loadout = [...DEFAULT_LOADOUT];
 if (!MODELS[cfg.model]) cfg.model = DEFAULT_MODEL;
+if (cfg.quality !== 'low') cfg.quality = 'high';
 const TEAM_COLOR_CSS = ['#3b82ff', '#ff5436'];
 
 // ------------------------------------------------------------------ audio
@@ -47,125 +52,109 @@ function beep(freq = 440, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
 }
 
 // ------------------------------------------------------------------ menu
+const ICON = {
+  dash: '\u{1F4A8}', shield: '\u{1F6E1}️', heal: '\u{1F49A}', shockwave: '\u{1F4A5}', bind: '⛓️',
+  firepool: '\u{1F30B}', nova: '❄️', incendiary: '\u{1F525}', barbed: '\u{1FA78}', explosive: '\u{1F4A3}',
+};
+const MODEL_SWATCH = { striker: '#d9d4c7', vanguard: '#9b7be8', phantom: '#4fd8e8', warden: '#7be08a' };
+const statBar = (label, v, max) => `<div class="stat">${label}<i><u style="width:${Math.round((v / max) * 100)}%"></u></i></div>`;
+
 function renderMenu() {
   $('name').value = cfg.name;
   $('m2').classList.toggle('on', cfg.mode === 2);
   $('m3').classList.toggle('on', cfg.mode === 3);
+  $('qh').classList.toggle('on', cfg.quality === 'high');
+  $('ql').classList.toggle('on', cfg.quality === 'low');
   $('sens').value = cfg.sens;
   $('sensv').textContent = Number(cfg.sens).toFixed(2);
+
   const mbox = $('modelpick');
   mbox.innerHTML = '';
   for (const [id, m] of Object.entries(MODELS)) {
     const b = document.createElement('button');
     b.className = 'modelcard' + (cfg.model === id ? ' on' : '');
-    b.innerHTML = `<div class="sw" style="background:${MODEL_SWATCH[id]}"></div><b>${m.name}</b><small>${m.desc}</small>`;
-    b.onclick = () => { cfg.model = id; renderMenu(); };
+    b.innerHTML = `<div class="sw" style="background:${MODEL_SWATCH[id]}"></div><b>${m.name}</b>` +
+      statBar('HP', m.hp, 130) + statBar('SPD', m.speed, 8) + statBar('HEAL', m.healMult, 1.5);
+    b.onclick = () => { cfg.model = id; renderMenu(); setPreview(id); };
     mbox.appendChild(b);
   }
+  $('modeldesc').textContent = MODELS[cfg.model].desc;
+
+  const slots = $('slots');
+  slots.innerHTML = '';
+  for (let i = 0; i < SLOT_COUNT; i++) {
+    const id = cfg.loadout[i];
+    const d = document.createElement('div');
+    if (id) {
+      d.className = 'slot filled';
+      d.innerHTML = `<span class="k">${SLOT_KEYS[i]}</span><span class="x">&#10005;</span><div class="ic">${ICON[id]}</div><div class="nm">${SPELLS[id].name}</div>`;
+      d.onclick = () => { cfg.loadout = cfg.loadout.filter((x) => x !== id); renderMenu(); };
+    } else {
+      d.className = 'slot';
+      d.innerHTML = `<span class="k">${SLOT_KEYS[i]}</span><div class="empty">pick a skill</div>`;
+    }
+    slots.appendChild(d);
+  }
+
   const box = $('spellpick');
   box.innerHTML = '';
   for (const [id, s] of Object.entries(SPELLS)) {
     const slot = cfg.loadout.indexOf(id);
     const b = document.createElement('button');
     b.className = 'spellcard' + (slot >= 0 ? ' on' : '');
-    b.innerHTML = `${slot >= 0 ? `<span class="badge">${SLOT_KEYS[slot]}</span>` : ''}<b>${s.name}</b><small>${s.desc} (${s.cd}s)</small>`;
+    b.innerHTML = `${slot >= 0 ? `<span class="badge">${SLOT_KEYS[slot]}</span>` : ''}<span class="ic">${ICON[id]}</span><span><b>${s.name}</b><small>${s.desc} (${s.cd}s)</small></span>`;
     b.onclick = () => {
       if (slot >= 0) cfg.loadout = cfg.loadout.filter((x) => x !== id);
-      else cfg.loadout = [...cfg.loadout, id].slice(-SLOT_COUNT);
+      else if (cfg.loadout.length < SLOT_COUNT) cfg.loadout = [...cfg.loadout, id];
       renderMenu();
     };
     box.appendChild(b);
   }
-  $('play').disabled = cfg.loadout.length !== SLOT_COUNT;
+  const ready = cfg.loadout.length === SLOT_COUNT;
+  $('play').disabled = !ready;
+  $('play').textContent = ready ? 'PLAY' : `PICK ${SLOT_COUNT - cfg.loadout.length} MORE SKILL${SLOT_COUNT - cfg.loadout.length > 1 ? 'S' : ''}`;
 }
-const MODEL_SWATCH = { striker: '#3b82ff', vanguard: '#8b5cf6', phantom: '#22d3ee', warden: '#4ade80' };
 $('m2').onclick = () => { cfg.mode = 2; renderMenu(); };
 $('m3').onclick = () => { cfg.mode = 3; renderMenu(); };
+$('qh').onclick = () => { cfg.quality = 'high'; renderMenu(); applyQuality(); };
+$('ql').onclick = () => { cfg.quality = 'low'; renderMenu(); applyQuality(); };
 $('sens').oninput = (e) => { cfg.sens = Number(e.target.value); $('sensv').textContent = cfg.sens.toFixed(2); };
-renderMenu();
+$('ver').textContent = `v${CLIENT_VERSION}`;
+
+// Warn when the uploaded files and the running server are different versions (the "old menu" problem).
+fetch('/version', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
+  if (j.version !== CLIENT_VERSION || VERSION !== CLIENT_VERSION) {
+    const w = $('verwarn');
+    w.classList.remove('hidden');
+    w.textContent = `Version mismatch: page ${CLIENT_VERSION}, server ${j.version}. Some files were not updated on GitHub. Upload ALL files, wait for Render to redeploy, then hard-refresh (Ctrl+Shift+R).`;
+  }
+}).catch(() => {});
 
 // ------------------------------------------------------------------ three.js scene
 const canvas = $('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0f1e);
-scene.fog = new THREE.Fog(0x0a0f1e, 35, 120);
-const camera = new THREE.PerspectiveCamera(80, 1, 0.05, 300);
+const camera = new THREE.PerspectiveCamera(80, 1, 0.05, 400);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
+const world = buildWorld(scene);
+buildShowroom(scene);
+function applyQuality() { world.setQuality(renderer, cfg.quality); resize(); }
 function resize() {
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  viewOffsetOn = false;
 }
+let viewOffsetOn = false;
 window.addEventListener('resize', resize);
-resize();
-
-scene.add(new THREE.HemisphereLight(0xaac4ff, 0x1a1f33, 1.2));
-const sun = new THREE.DirectionalLight(0xffffff, 1.3);
-sun.position.set(20, 40, 10);
-scene.add(sun);
-
-function gridTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = '#131a2e'; g.fillRect(0, 0, 256, 256);
-  g.strokeStyle = '#1c2748'; g.lineWidth = 1;
-  for (let i = 64; i < 256; i += 64) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.moveTo(0, i); g.lineTo(256, i); g.stroke(); }
-  g.strokeStyle = '#2b3a6b'; g.lineWidth = 3; g.strokeRect(0, 0, 256, 256);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
-  return t;
-}
-{
-  const tex = gridTexture();
-  tex.repeat.set((ARENA * 2) / 4, (ARENA * 2) / 4);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
-  floor.rotation.x = -Math.PI / 2;
-  scene.add(floor);
-
-  for (const team of [0, 1]) {
-    const pad = new THREE.Mesh(new THREE.PlaneGeometry(16, 6), new THREE.MeshBasicMaterial({ color: TEAM_COLOR[team], transparent: true, opacity: 0.18 }));
-    pad.rotation.x = -Math.PI / 2;
-    pad.position.set(0, 0.02, team === 0 ? -(ARENA - 4) : ARENA - 4);
-    scene.add(pad);
-  }
-
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2a3558, roughness: 0.8 });
-  const lowMat = new THREE.MeshStandardMaterial({ color: 0x3a4f8a, roughness: 0.8 });
-  const edgeMat = new THREE.LineBasicMaterial({ color: 0x7f9bff });
-  for (const w of WALLS) {
-    const sx = w.maxX - w.minX, sz = w.maxZ - w.minZ;
-    const geo = new THREE.BoxGeometry(sx, w.h, sz);
-    const m = new THREE.Mesh(geo, w.h < 2 ? lowMat : wallMat);
-    m.position.set((w.minX + w.maxX) / 2, w.h / 2, (w.minZ + w.maxZ) / 2);
-    scene.add(m);
-    const e = new THREE.LineSegments(new THREE.EdgesGeometry(geo), edgeMat);
-    e.position.copy(m.position);
-    scene.add(e);
-  }
-  const bMat = new THREE.MeshStandardMaterial({ color: 0x1b2442, roughness: 0.9 });
-  const bh = 8, th = 1;
-  const borders = [
-    [0, -ARENA - th / 2, ARENA * 2 + th * 2, th], [0, ARENA + th / 2, ARENA * 2 + th * 2, th],
-    [-ARENA - th / 2, 0, th, ARENA * 2], [ARENA + th / 2, 0, th, ARENA * 2],
-  ];
-  for (const [x, z, w, d] of borders) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, bh, d), bMat);
-    m.position.set(x, bh / 2, z);
-    scene.add(m);
-  }
-}
+applyQuality();
 
 // viewmodel gun (child of camera)
 const gun = new THREE.Group();
 {
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.5), new THREE.MeshStandardMaterial({ color: 0x20263d, roughness: 0.5, metalness: 0.4 }));
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.084, 0.02, 0.3), new THREE.MeshBasicMaterial({ color: 0x7f9bff }));
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.084, 0.02, 0.3), new THREE.MeshBasicMaterial({ color: 0xe2b84a }));
   stripe.position.set(0, 0.055, -0.05);
   const flash = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffe9a0 }));
   flash.position.set(0, 0, -0.32);
@@ -184,6 +173,7 @@ const shieldGeo = new THREE.SphereGeometry(1.15, 20, 14);
 const auraGeo = new THREE.SphereGeometry(0.95, 16, 12);
 const glowMat = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
 const AURA_MATS = { burn: glowMat(0xff6a1a, 0.32), bleed: glowMat(0xd01030, 0.3), slow: glowMat(0x6ab8ff, 0.28) };
+const discGeo = new THREE.CircleGeometry(0.62, 24);
 const rootGeo = new THREE.RingGeometry(0.55, 0.75, 28);
 const rootMat = new THREE.MeshBasicMaterial({ color: 0xb36bff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
 
@@ -219,7 +209,7 @@ const haloMat = new THREE.MeshBasicMaterial({ color: 0xfff3a0 });
 
 function makeEntity(pd) {
   const color = TEAM_COLOR[pd.tm];
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, emissive: color, emissiveIntensity: 0.25 });
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, emissive: color, emissiveIntensity: 0.3 });
   const group = new THREE.Group();
   const parts = modelParts(pd.md || DEFAULT_MODEL);
   group.add(new THREE.Mesh(parts.body, mat), new THREE.Mesh(parts.head, mat));
@@ -255,8 +245,23 @@ function makeEntity(pd) {
   sprite.position.y = 2.25;
   sprite.renderOrder = 10;
   group.add(sprite);
+  group.traverse((o) => { if (o.isMesh && o !== shield && !Object.values(auras).includes(o) && o !== root) o.castShadow = true; });
+  const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthWrite: false }));
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.035;
+  group.add(disc);
   scene.add(group);
   return { group, shield, auras, root, sprite, cv, tex, key: '', x: pd.x, y: pd.y, z: pd.z, yaw: pd.yaw, pit: pd.pit };
+}
+
+// Menu showroom: the chosen model turns on a podium next to the menu panel.
+let preview = null;
+function setPreview(modelId) {
+  if (preview) scene.remove(preview.group);
+  preview = makeEntity({ tm: 0, md: modelId, x: 0, y: 0, z: 0, yaw: 0, pit: 0 });
+  preview.sprite.visible = false;
+  preview.group.scale.setScalar(1.35);
+  preview.group.position.set(SHOWROOM.x, SHOWROOM.y, SHOWROOM.z);
 }
 
 function drawTag(ent, pd, ally) {
@@ -382,7 +387,7 @@ function buildSpellHud() {
   meLoadout.forEach((id, i) => {
     const d = document.createElement('div');
     d.className = 'spell';
-    d.innerHTML = `<div class="key">${SLOT_KEYS[i]}</div><div class="nm">${SPELLS[id].name}</div><div class="cdo"></div><div class="cdt"></div>`;
+    d.innerHTML = `<div class="rdy">READY</div><div class="key">${SLOT_KEYS[i]}</div><div class="ic">${ICON[id]}</div><div class="nm">${SPELLS[id].name}</div><div class="cdo"></div><div class="cdt"></div>`;
     box.appendChild(d);
   });
 }
@@ -552,7 +557,7 @@ document.addEventListener('pointerlockchange', () => {
 
 $('play').onclick = () => {
   cfg.name = ($('name').value || 'Player').trim().slice(0, 14) || 'Player';
-  store.set('name', cfg.name); store.set('mode', cfg.mode); store.set('sens', cfg.sens); store.set('loadout3', cfg.loadout); store.set('model', cfg.model);
+  store.set('name', cfg.name); store.set('mode', cfg.mode); store.set('sens', cfg.sens); store.set('loadout3', cfg.loadout); store.set('model', cfg.model); store.set('quality', cfg.quality);
   audio();
   $('menu').classList.add('hidden');
   connect();
@@ -649,15 +654,28 @@ function frame(now) {
 
 function render(dt, now) {
   if (!playing || !latest) {
-    // menu background: slow orbit
+    // menu: camera looks at the podium; the view is shifted so the model sits right of the menu panel
     const t = now / 1000;
-    camera.position.set(Math.sin(t * 0.1) * 42, 20, Math.cos(t * 0.1) * 42);
-    camera.lookAt(0, 0, 0);
+    const W = window.innerWidth, H = window.innerHeight;
+    const panel = Math.min(560, W);
+    if (!viewOffsetOn) { camera.setViewOffset(W, H, W > 700 ? -panel / 2 : 0, 0, W, H); viewOffsetOn = true; }
+    camera.position.set(SHOWROOM.x + Math.sin(t * 0.15) * 0.8, SHOWROOM.y + 1.7, SHOWROOM.z + 7.2);
+    camera.lookAt(SHOWROOM.x, SHOWROOM.y + 1.1, SHOWROOM.z);
     gun.visible = false;
+    if (preview) {
+      preview.group.visible = true;
+      preview.group.rotation.y = Math.PI + t * 0.7;
+      preview.group.position.y = SHOWROOM.y;
+    }
+    world.update(now, camera);
+    animateZones(now);
     renderer.render(scene, camera);
     return;
   }
+  if (viewOffsetOn) { camera.clearViewOffset(); viewOffsetOn = false; }
+  if (preview) preview.group.visible = false;
 
+  world.update(now, camera);
   // entities
   const seen = new Set();
   let spectateTarget = null;
@@ -737,9 +755,11 @@ function updateHud(now) {
   for (let i = 0; i < spells.length; i++) {
     const total = SPELLS[meLoadout[i]].cd;
     const rem = Math.max(0, (meCd[i] || 0) - (now - cdAt) / 1000);
-    spells[i].classList.toggle('ready', rem <= 0 && meAlive);
-    spells[i].querySelector('.cdo').style.height = `${clamp(rem / total, 0, 1) * 100}%`;
-    setText(spells[i].querySelector('.cdt'), rem > 0 ? String(Math.ceil(rem)) : '');
+    const isReady = rem <= 0.05 && meAlive;
+    spells[i].classList.toggle('ready', isReady);
+    spells[i].querySelector('.cdo').style.height = isReady ? '0%' : `${clamp(rem / total, 0, 1) * 100}%`;
+    // READY shows the glowing icon and no number; cooling down shows seconds left (tenths under 1s so it never sits on "1")
+    setText(spells[i].querySelector('.cdt'), isReady || !meAlive ? '' : rem < 1 ? rem.toFixed(1) : String(Math.ceil(rem)));
   }
 
   const BUFF_BIT = { incendiary: 1, barbed: 2, explosive: 4 };
@@ -780,6 +800,8 @@ function updateHud(now) {
   setText($('ping'), `${pingMs} ms`);
 }
 
+setPreview(cfg.model);
+renderMenu();
 requestAnimationFrame(frame);
 
 // Small read-only handle used by automated browser tests.

@@ -1,8 +1,8 @@
 // Authoritative game room: players, bots, rounds, hitscan, skills, status effects.
 import {
   DT, EYE_H, FIRE_INTERVAL, BODY_DMG, HEAD_DMG, RANGE, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT,
-  stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint,
-} from './shared/sim.js';
+  ARENA, WALLS, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint,
+} from './sim.js';
 
 export const WIN_ROUNDS = 3;
 export const ROUND_TIME = 90;
@@ -43,6 +43,7 @@ function newAI() {
   return {
     tgt: null, retargetT: 0, strafe: 1, strafeT: 0, seenT: 0, noiseY: 0, noiseP: 0, noiseT: 0,
     stuckT: 0, lx: 0, lz: 0, avoidT: 0, avoidDir: 1, burstT: 0.3, bursting: false,
+    navCell: -1, navAt: 0, field: null,
   };
 }
 
@@ -535,6 +536,91 @@ export class Room {
   }
 }
 
+// ====================================================================== navigation grid
+// 1 m cells; a cell is blocked when a player standing at its centre would touch a wall.
+const NAV_N = ARENA * 2;
+const NAV_CLEAR = 0.6;
+const navBlocked = new Uint8Array(NAV_N * NAV_N);
+for (let iz = 0; iz < NAV_N; iz++) {
+  for (let ix = 0; ix < NAV_N; ix++) {
+    const cx = -ARENA + ix + 0.5, cz = -ARENA + iz + 0.5;
+    let b = Math.abs(cx) > ARENA - NAV_CLEAR || Math.abs(cz) > ARENA - NAV_CLEAR;
+    if (!b) {
+      for (const w of WALLS) {
+        if (cx > w.minX - NAV_CLEAR && cx < w.maxX + NAV_CLEAR && cz > w.minZ - NAV_CLEAR && cz < w.maxZ + NAV_CLEAR) { b = true; break; }
+      }
+    }
+    navBlocked[iz * NAV_N + ix] = b ? 1 : 0;
+  }
+}
+const navCellOf = (x, z) => {
+  const ix = clamp(Math.floor(x + ARENA), 0, NAV_N - 1), iz = clamp(Math.floor(z + ARENA), 0, NAV_N - 1);
+  return iz * NAV_N + ix;
+};
+/** Nearest unblocked cell (spiral search) so a bot hugging a wall still has a valid start. */
+function navFreeCell(cell) {
+  if (!navBlocked[cell]) return cell;
+  const cx = cell % NAV_N, cz = Math.floor(cell / NAV_N);
+  for (let r = 1; r <= 4; r++) {
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        const x = cx + dx, z = cz + dz;
+        if (x < 0 || z < 0 || x >= NAV_N || z >= NAV_N) continue;
+        if (!navBlocked[z * NAV_N + x]) return z * NAV_N + x;
+      }
+    }
+  }
+  return cell;
+}
+const NAV_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+const navQueue = new Int32Array(NAV_N * NAV_N);
+/** Distance field (in steps) from `goal` over free cells; -1 = unreachable. */
+export function navField(goal) {
+  const dist = new Int16Array(NAV_N * NAV_N).fill(-1);
+  let head = 0, tail = 0;
+  goal = navFreeCell(goal);
+  dist[goal] = 0;
+  navQueue[tail++] = goal;
+  while (head < tail) {
+    const c = navQueue[head++];
+    const cx = c % NAV_N, cz = (c - cx) / NAV_N;
+    for (const [dx, dz] of NAV_DIRS) {
+      const x = cx + dx, z = cz + dz;
+      if (x < 0 || z < 0 || x >= NAV_N || z >= NAV_N) continue;
+      const n = z * NAV_N + x;
+      if (dist[n] !== -1 || navBlocked[n]) continue;
+      if (dx !== 0 && dz !== 0 && (navBlocked[cz * NAV_N + x] || navBlocked[z * NAV_N + cx])) continue; // no corner cutting
+      dist[n] = dist[c] + 1;
+      navQueue[tail++] = n;
+    }
+  }
+  return dist;
+}
+/** Is there a walkable route between two points? (used by tests) */
+export function navReachable(ax, az, bx, bz) {
+  return navField(navCellOf(bx, bz))[navFreeCell(navCellOf(ax, az))] >= 0;
+}
+/** Next waypoint (x,z) on the way from (x,z) down the distance field, a few steps ahead. */
+function navWaypoint(field, x, z, steps = 3) {
+  let c = navFreeCell(navCellOf(x, z));
+  if (field[c] < 0) return null;
+  for (let i = 0; i < steps && field[c] > 0; i++) {
+    const cx = c % NAV_N, cz = (c - cx) / NAV_N;
+    let best = c, bd = field[c];
+    for (const [dx, dz] of NAV_DIRS) {
+      const nx = cx + dx, nz = cz + dz;
+      if (nx < 0 || nz < 0 || nx >= NAV_N || nz >= NAV_N) continue;
+      const n = nz * NAV_N + nx;
+      if (field[n] >= 0 && field[n] < bd) { bd = field[n]; best = n; }
+    }
+    if (best === c) break;
+    c = best;
+  }
+  const cx = c % NAV_N, cz = (c - cx) / NAV_N;
+  return { x: -ARENA + cx + 0.5, z: -ARENA + cz + 0.5 };
+}
+
 // ====================================================================== bot AI
 function botThink(room, p, dt) {
   const ai = p.ai, skill = p.skill;
@@ -597,17 +683,31 @@ function botThink(room, p, dt) {
     // Chase: head for the target, steer around walls.
     if (moved < 0.03) ai.stuckT += dt; else ai.stuckT = Math.max(0, ai.stuckT - dt);
     if (ai.stuckT > 0.35) { ai.avoidT = 0.9; ai.avoidDir = Math.random() < 0.5 ? -1 : 1; ai.stuckT = 0; }
-    let heading = wantYaw;
-    const hx = -Math.sin(heading), hz = -Math.cos(heading);
-    if (ai.avoidT <= 0 && rayWalls(p.x, 0.6, p.z, hx, 0, hz, 2.5) < 2.5) {
-      ai.avoidT = 0.6;
-      ai.avoidDir = Math.random() < 0.5 ? -1 : 1;
+    // follow the walkable route (distance field from the target), not a straight line
+    const tc = navCellOf(t.x, t.z);
+    if (!ai.field || tc !== ai.navCell || room.time - ai.navAt > 0.6) {
+      ai.field = navField(tc);
+      ai.navCell = tc;
+      ai.navAt = room.time;
     }
+    const wp = navWaypoint(ai.field, p.x, p.z);
+    let heading = wp ? Math.atan2(-(wp.x - p.x), -(wp.z - p.z)) : wantYaw;
     if (ai.avoidT > 0) { heading += ai.avoidDir * 1.2; ai.avoidT -= dt; }
     inp.yaw = p.yaw + angDiff(heading, p.yaw) * Math.min(1, 10 * dt);
     inp.pitch = p.pitch * 0.9;
     inp.mz = 1;
     ai.bursting = false;
+  }
+
+  // hop over low walls that block the way (a low wall stops a ray at knee height but not at head height)
+  if (inp.mz > 0 || inp.mx !== 0 || !visible) {
+    const s2 = Math.sin(inp.yaw), c2 = Math.cos(inp.yaw);
+    const mxw = -s2 * inp.mz + c2 * inp.mx, mzw = -c2 * inp.mz - s2 * inp.mx;
+    const ml = Math.hypot(mxw, mzw);
+    if (ml > 0.1) {
+      const ux = mxw / ml, uz = mzw / ml;
+      if (rayWalls(p.x, 0.5, p.z, ux, 0, uz, 1.1) < 1.1 && rayWalls(p.x, 1.3, p.z, ux, 0, uz, 1.5) > 1.4) inp.jump = true;
+    }
   }
 
   for (let s = 0; s < SLOT_COUNT; s++) {
