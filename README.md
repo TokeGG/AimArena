@@ -21,10 +21,19 @@ Anyone who can reach your server can join the same mode and replaces a bot on a 
 | W A S D | Move |
 | Space | Jump |
 | Mouse | Aim / left click shoots |
-| Q / E | Your two chosen spells |
+| Q / E / R | Your three chosen skills |
 | Esc | Pause menu |
 
-## Spells (pick two)
+## Models (pick one)
+
+| Model | HP | Speed | Notes |
+|---|---|---|---|
+| Striker | 100 | 7 | Balanced |
+| Vanguard | 130 | 6.2 | Tanky, slower |
+| Phantom | 80 | 8 | Fast, fragile |
+| Warden | 105 | 6.8 | Heals 50% more |
+
+## Skills (pick any three, any model)
 
 | Spell | Cooldown | Effect |
 |---|---|---|
@@ -32,6 +41,12 @@ Anyone who can reach your server can join the same mode and replaces a bot on a 
 | Shield | 14s | 60% less damage for 2.5s |
 | Heal | 18s | Restore 35 HP |
 | Shockwave | 12s | 25 damage and knockback to enemies within 6m |
+| Bind | 11s | Instant shot along your crosshair: roots the first enemy hit for 1.8s |
+| Fire Pool | 14s | Ignite the ground where you aim (3m wide, 5s): burns enemies standing in it |
+| Frost Nova | 12s | 12 damage and 3s slow to enemies within 5m |
+| Incendiary Rounds | 16s | 6s: rifle hits leave fire under the target's feet |
+| Barbed Rounds | 14s | 6s: rifle hits cause bleed (worse while the target moves) |
+| Explosive Rounds | 15s | 6s: rifle hits explode for 14 damage to other enemies within 3m |
 
 Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots.
 
@@ -43,11 +58,11 @@ Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots.
 | `game.js` | Room: rounds, hitscan, spells, bot AI |
 | `server.js`, `ws-lite.js` | HTTP + built-in WebSocket server (60 Hz sim, 20 Hz snapshots) |
 | `public/` | Client: rendering, prediction/interpolation, HUD |
-| `test/headless.mjs` | `node test/headless.mjs`: bot-only matches + live WebSocket client |
+| `test/headless.mjs` | `npm test`: bot-only matches, live WebSocket client, lag compensation, skills |
 
 ## Known limits
 
-- No lag compensation on hitscan: you shoot what the server sees, so high-ping players must lead slightly.
+- Lag compensation rewinds enemies up to 0.4s for shots and Bind. Very high ping (over about 400ms) is still unfair.
 - Players do not collide with each other.
 - One map. Edit `buildWalls()` in `shared/sim.js` (keep it point-mirrored so teams stay fair).
 - No matchmaking, accounts or ranks yet. Rooms are created per mode when someone joins.

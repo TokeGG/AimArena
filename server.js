@@ -4,11 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Room } from './game.js';
 import { attachWebSocket } from './ws-lite.js';
-import { DT, SPELLS } from './shared/sim.js';
+import { DT, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT } from './shared/sim.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
-const SNAPSHOT_EVERY = 3; // ticks (60 Hz sim -> 20 Hz snapshots)
+const SNAPSHOT_EVERY = 2; // ticks (60 Hz sim -> 30 Hz snapshots)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -51,9 +51,13 @@ function cleanName(raw) {
 
 function cleanLoadout(raw) {
   const out = [];
-  if (Array.isArray(raw)) for (const id of raw) if (SPELLS[id] && !out.includes(id)) out.push(id);
-  for (const id of ['dash', 'heal', 'shield', 'shockwave']) if (out.length < 2 && !out.includes(id)) out.push(id);
-  return out.slice(0, 2);
+  if (Array.isArray(raw)) for (const id of raw) if (SPELLS[id] && !out.includes(id) && out.length < SLOT_COUNT) out.push(id);
+  for (const id of [...DEFAULT_LOADOUT, ...Object.keys(SPELLS)]) if (out.length < SLOT_COUNT && !out.includes(id)) out.push(id);
+  return out;
+}
+
+function cleanModel(raw) {
+  return typeof raw === 'string' && Object.hasOwn(MODELS, raw) ? raw : DEFAULT_MODEL;
 }
 
 attachWebSocket(server, (ws) => {
@@ -73,11 +77,11 @@ attachWebSocket(server, (ws) => {
       const mode = m.mode === 3 ? 3 : 2;
       let room = rooms.find((r) => r.mode === mode && r.hasBot());
       if (!room) { room = new Room(mode); rooms.push(room); }
-      const p = room.addHuman(ws, cleanName(m.name), cleanLoadout(m.loadout));
+      const p = room.addHuman(ws, cleanName(m.name), cleanLoadout(m.loadout), cleanModel(m.model));
       if (!p) { ws.send(JSON.stringify({ t: 'full' })); return; }
       ws.player = p;
       ws.room = room;
-      ws.send(JSON.stringify({ t: 'welcome', id: p.id, team: p.team, mode, loadout: p.loadout }));
+      ws.send(JSON.stringify({ t: 'welcome', id: p.id, team: p.team, mode, loadout: p.loadout, model: p.model }));
     }
   });
 
