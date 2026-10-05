@@ -6,7 +6,7 @@ import {
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.4.0';
+const CLIENT_VERSION = '0.4.1';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -480,11 +480,13 @@ function handleEvent(ev, d) {
   }
 }
 
+let rosterHtml = '';
 function updateRoster(d) {
   const mine = d.p.filter((p) => p.tm === myTeam), theirs = d.p.filter((p) => p.tm !== myTeam);
   const row = (p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.tm === 0 ? '#6fa3ff' : '#ff7a62'}">${p.n}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
     `<span class="bar"><i style="width:${Math.min(100, Math.round((p.hp / (p.mh || 100)) * 100))}%;background:${p.tm === myTeam ? '#4ade80' : '#ff5436'}"></i></span></div>`;
-  $('roster').innerHTML = mine.map(row).join('') + '<hr>' + theirs.map(row).join('');
+  const html = mine.map(row).join('') + '<hr>' + theirs.map(row).join('');
+  if (html !== rosterHtml) { rosterHtml = html; $('roster').innerHTML = html; }
   const sc = d.sc;
   $('scB').textContent = sc[0];
   $('scR').textContent = sc[1];
@@ -506,18 +508,29 @@ window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; shootBuf = 0; });
 canvas.addEventListener('mousedown', (e) => {
   if (!playing) return;
-  if (!locked) { canvas.requestPointerLock(); return; }
+  if (!locked) { lockPointer(); return; }
   if (e.button === 0) shootBuf = 0.14; // semi-auto: one click = one shot (with a short buffer so fast clicks are not lost)
 });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
+// Raw (unaccelerated) mouse where the browser supports it, plain pointer lock otherwise.
+function lockPointer() {
+  try {
+    const r = canvas.requestPointerLock({ unadjustedMovement: true });
+    if (r && r.catch) r.catch(() => canvas.requestPointerLock());
+  } catch { canvas.requestPointerLock(); }
+}
+let ignoreMoves = 0;
 window.addEventListener('mousemove', (e) => {
   if (!locked || !playing) return;
+  if (ignoreMoves > 0) { ignoreMoves--; return; } // first events after locking can carry a bogus jump
+  if (Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400) return; // browser glitch spike, not a real flick
   const s = 0.0022 * cfg.sens;
   yaw -= e.movementX * s;
   pitch = clamp(pitch - e.movementY * s, -1.5, 1.5);
 });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
+  if (locked) ignoreMoves = 3;
   if (!locked) shootBuf = 0;
   $('pause').classList.toggle('hidden', locked || !playing);
 });
@@ -528,9 +541,9 @@ $('play').onclick = () => {
   audio();
   $('menu').classList.add('hidden');
   connect();
-  canvas.requestPointerLock();
+  lockPointer();
 };
-$('resume').onclick = () => canvas.requestPointerLock();
+$('resume').onclick = () => lockPointer();
 $('leave').onclick = () => location.reload();
 
 // ------------------------------------------------------------------ fixed-step update (60 Hz)
@@ -612,7 +625,24 @@ function sampleRemote(id, now) {
 }
 
 let last = performance.now(), acc = 0;
+let fpsEma = 60, slowWindows = 0, winFrames = 0, winMs = 0, toastT = 0;
+function trackPerformance(rawMs) {
+  fpsEma += (1000 / Math.max(1, rawMs) - fpsEma) * 0.05;
+  winFrames++; winMs += rawMs;
+  if (winMs < 2500) return;
+  const avg = winMs / winFrames;
+  winFrames = 0; winMs = 0;
+  // Slow machine on High graphics: switch to Fast by itself after two slow windows in a row.
+  if (playing && cfg.quality === 'high' && avg > 30) {
+    if (++slowWindows >= 2) {
+      cfg.quality = 'low'; store.set('quality', 'low'); applyQuality();
+      slowWindows = 0; toastT = performance.now() + 5000;
+    }
+  } else slowWindows = 0;
+}
+
 function frame(now) {
+  trackPerformance(now - last);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   acc += dt;
@@ -774,7 +804,7 @@ function updateHud(now) {
   if (banner.innerHTML !== html) banner.innerHTML = html;
 
   $('spectate').classList.toggle('hidden', meAlive || phase === 'countdown');
-  setText($('ping'), `${pingMs} ms`);
+  setText($('ping'), `${Math.round(fpsEma)} fps \u00b7 ${pingMs} ms${performance.now() < toastT ? ' \u00b7 switched to Fast graphics' : ''}`);
 }
 
 setPreview(cfg.model);
@@ -789,6 +819,7 @@ window.__aim = {
   get pending() { return pending; },
   get alive() { return meAlive; },
   get shots() { return shotCount; },
+  get sceneObjects() { let n = 0; scene.traverse((o) => { if (o.isMesh) n++; }); return n; },
   get myId() { return myId; },
   forceFire(v) { locked = v; shootBuf = v ? 0.14 : 0; },
 };

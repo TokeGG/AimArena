@@ -113,7 +113,52 @@ function bannerTexture(colorHex) {
 }
 
 // ------------------------------------------------------------------ pieces
+// Static scenery boxes added straight to the scene are collected and merged into a few big meshes
+// (one per material) so the GPU draws a few dozen things instead of hundreds.
+let batchScene = null;
+const batches = [new Map(), new Map()]; // [shadowed, unshadowed]: material -> boxes [[w,h,d,x,y,z]]
+
+function mergeBoxes(list) {
+  const pos = [], nor = [], uv = [], idx = [];
+  let base = 0;
+  for (const [w, h, d, x, y, z] of list) {
+    const g = new THREE.BoxGeometry(w, h, d);
+    const p = g.attributes.position.array, n = g.attributes.normal.array, t = g.attributes.uv.array, ix = g.index.array;
+    for (let i = 0; i < p.length; i += 3) pos.push(p[i] + x, p[i + 1] + y, p[i + 2] + z);
+    for (let i = 0; i < n.length; i++) nor.push(n[i]);
+    for (let i = 0; i < t.length; i++) uv.push(t[i]);
+    for (let i = 0; i < ix.length; i++) idx.push(ix[i] + base);
+    base += p.length / 3;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  out.setIndex(idx);
+  out.computeBoundingSphere();
+  return out;
+}
+
+function flushBatches(scene) {
+  batches.forEach((map, i) => {
+    for (const [material, boxes] of map) {
+      const m = new THREE.Mesh(mergeBoxes(boxes), material);
+      m.castShadow = i === 0; m.receiveShadow = i === 0;
+      scene.add(m);
+    }
+    map.clear();
+  });
+  batchScene = null;
+}
+
 function box(parent, w, h, d, x, y, z, material, shadows = true) {
+  if (parent === batchScene) {
+    const map = batches[shadows ? 0 : 1];
+    if (!map.has(material)) map.set(material, []);
+    map.get(material).push([w, h, d, x, y, z]);
+    return null;
+  }
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
   m.position.set(x, y, z);
   m.castShadow = shadows; m.receiveShadow = shadows;
@@ -129,7 +174,7 @@ const flameMats = [
   new THREE.MeshBasicMaterial({ color: 0xff8a1f, transparent: true, opacity: 0.9, depthWrite: false }),
   new THREE.MeshBasicMaterial({ color: 0xffd25a, transparent: true, opacity: 0.9, depthWrite: false }),
 ];
-function torch(scene, x, z, h = 1.25) {
+function torch(scene, x, z, h = 1.25, lit = false) {
   const g = new THREE.Group();
   g.position.set(x, 0, z);
   const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, h, 10), MARBLE);
@@ -137,18 +182,20 @@ function torch(scene, x, z, h = 1.25) {
   const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.25, 0.28, 12), GOLD_MAT);
   bowl.position.y = h + 0.1;
   g.add(ped, bowl);
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 3; i++) {
     const f = new THREE.Mesh(flameGeo, flameMats[i % 2]);
-    const a = (i / 5) * Math.PI * 2;
+    const a = (i / 3) * Math.PI * 2;
     f.position.set(Math.cos(a) * 0.14, h + 0.22, Math.sin(a) * 0.14);
     f.userData.phase = Math.random() * 6.28;
     g.add(f);
     flames.push(f);
   }
-  const light = new THREE.PointLight(0xff9a45, 45, 20, 2);
-  light.position.set(0, h + 0.9, 0);
-  g.add(light);
-  torchLights.push(light);
+  if (lit) { // real lights are costly: only the four central braziers get one
+    const light = new THREE.PointLight(0xff9a45, 55, 24, 2);
+    light.position.set(0, h + 0.9, 0);
+    g.add(light);
+    torchLights.push(light);
+  }
   scene.add(g);
 }
 
@@ -204,6 +251,7 @@ function buildWallMesh(scene, w) {
 
 // ------------------------------------------------------------------ world
 export function buildWorld(scene) {
+  batchScene = scene;
   scene.background = new THREE.Color(HAZE);
   scene.fog = new THREE.Fog(HAZE, 45, 170);
 
@@ -264,6 +312,7 @@ export function buildWorld(scene) {
       box(scene, 0.9, H - 0.5, 0.9, px, (H - 0.5) / 2 + 0.25, pz, MARBLE);
     }
   }
+  flushBatches(scene);
   // team banners on the back walls
   for (const team of [0, 1]) {
     const tex = bannerTexture(TEAM_COLOR[team]);
@@ -274,7 +323,8 @@ export function buildWorld(scene) {
   }
 
   // torches: spawn pocket corners + mid-wall braziers
-  for (const [x, z] of [[9.2, -29], [-9.2, -29], [9.2, 29], [-9.2, 29], [-29, 0], [29, 0], [0, -17.6], [0, 17.6]]) torch(scene, x, z);
+  for (const [x, z] of [[9.2, -29], [-9.2, -29], [9.2, 29], [-9.2, 29]]) torch(scene, x, z);
+  for (const [x, z] of [[-29, 0], [29, 0], [0, -17.6], [0, 17.6]]) torch(scene, x, z, 1.25, true);
 
   // distant mountains (hazy silhouettes)
   const mtnMat = new THREE.MeshStandardMaterial({ color: 0x1c1730, roughness: 1, flatShading: true });
@@ -314,12 +364,13 @@ export function buildWorld(scene) {
   /** 'high' = shadows + full resolution, 'low' = no shadows, capped resolution. */
   function setQuality(renderer, q) {
     const high = q === 'high';
-    renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio || 1, 2) : 1);
+    renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio || 1, 1.5) : 0.75);
     renderer.shadowMap.enabled = high;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     sun.castShadow = high;
     for (const l of torchLights) l.visible = high;
-    sun.shadow.mapSize.set(high ? 2048 : 512, high ? 2048 : 512);
+    sun.shadow.mapSize.set(1024, 1024);
+    for (const c of clouds) c.visible = high;
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
     scene.traverse((o) => {
       if (!o.material) return;
