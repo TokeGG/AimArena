@@ -20,7 +20,8 @@ Anyone who can reach your server can join the same mode and replaces a bot on a 
 |---|---|
 | W A S D | Move |
 | Space | Jump |
-| Mouse | Aim / left click shoots |
+| C or Shift (hold) | Crouch: half speed, lower view, smaller hitbox, no jumping |
+| Mouse | Aim. Left click shoots, one shot per click (semi-auto) |
 | Q / E / R | Your three chosen skills |
 | Esc | Pause menu |
 

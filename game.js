@@ -1,6 +1,6 @@
 // Authoritative game room: players, bots, rounds, hitscan, skills, status effects.
 import {
-  DT, EYE_H, FIRE_INTERVAL, BODY_DMG, HEAD_DMG, RANGE, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT,
+  DT, eyeH, FIRE_INTERVAL, BODY_DMG, HEAD_DMG, RANGE, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT,
   ARENA, WALLS, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint,
 } from './sim.js';
 
@@ -9,6 +9,7 @@ export const ROUND_TIME = 90;
 export const MAX_REWIND = 24; // ticks (400 ms at 60 Hz): the most a shot can be rewound
 
 // tuning
+const FIRE_TOLERANCE = 0.06; // seconds
 const BUFF_TIME = 6;
 const BURN_DPS = 14, BURN_LINGER = 1.2, BURN_ON_HIT = 3;
 const BLEED_DPS = 6, BLEED_MOVING_MULT = 1.8, BLEED_TIME = 4;
@@ -159,7 +160,7 @@ export class Room {
       seq,
       mx: n(m.mx, -1, 1), mz: n(m.mz, -1, 1),
       yaw: n(m.yaw, -1e4, 1e4), pitch: n(m.pitch, -1.55, 1.55),
-      jump: !!m.jump, shoot: !!m.shoot, q: !!m.q, e: !!m.e, r: !!m.r,
+      jump: !!m.jump, crouch: !!m.crouch, shoot: !!m.shoot, q: !!m.q, e: !!m.e, r: !!m.r,
       vt: Number.isFinite(+m.vt) ? +m.vt : 0, // server tick the shooter was looking at
     });
     if (p.queue.length > 20) p.queue.shift();
@@ -170,7 +171,7 @@ export class Room {
     for (const p of this.players) {
       const sp = spawnPoint(p.team, p.slot, this.size);
       p.x = sp.x; p.y = 0; p.z = sp.z;
-      p.vx = p.vy = p.vz = 0;
+      p.vx = p.vy = p.vz = 0; p.crouch = false;
       p.dvx = p.dvz = 0; p.dashT = 0;
       p.yaw = sp.yaw; p.pitch = 0;
       p.hp = p.maxHp; p.alive = true;
@@ -284,7 +285,7 @@ export class Room {
 
     // Record positions so shots can be rewound to what the shooter saw.
     for (const p of this.players) {
-      p.hist.push({ n: this.tick, x: p.x, y: p.y, z: p.z });
+      p.hist.push({ n: this.tick, x: p.x, y: p.y, z: p.z, crouch: p.crouch ? 1 : 0 });
       if (p.hist.length > MAX_REWIND + 16) p.hist.shift();
     }
 
@@ -298,7 +299,8 @@ export class Room {
     p.yaw = inp.yaw;
     p.pitch = inp.pitch;
     if (this.phase !== 'live' || !p.alive) return;
-    if (inp.shoot && p.fireCd <= 0) this.shoot(p, inp);
+    // small tolerance: semi-auto clients send one shot per click, so a packet landing a tick early must not be dropped
+    if (inp.shoot && p.fireCd <= FIRE_TOLERANCE) this.shoot(p, inp);
     for (let s = 0; s < SLOT_COUNT; s++) {
       if (inp[SLOT_FLAG[s]] && p.cd[s] <= 0) this.cast(p, s, inp);
     }
@@ -361,7 +363,7 @@ export class Room {
   shoot(p, inp) {
     p.fireCd = FIRE_INTERVAL;
     const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
-    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+    const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
     const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, RANGE), RANGE);
     const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt);
     let t = best ? best.t : tWall;
@@ -414,7 +416,7 @@ export class Room {
         const a = h[i], b = h[i + 1];
         if (b && b.n > a.n) {
           const f = (t - a.n) / (b.n - a.n);
-          return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f };
+          return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f, crouch: a.crouch };
         }
         return a;
       }
@@ -438,7 +440,7 @@ export class Room {
     p.cd[slot] = spell.cd;
     const ev = { k: 'spell', id: p.id, s: id, x: r2(p.x), y: r2(p.y), z: r2(p.z) };
     const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
-    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+    const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
 
     switch (id) {
       case 'dash': {
@@ -516,7 +518,7 @@ export class Room {
         id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model,
         x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw), pit: r3(p.pitch),
         hp: Math.ceil(p.hp), mh: p.maxHp, a: p.alive ? 1 : 0, sh: p.shieldT > 0 ? 1 : 0,
-        sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0),
+        sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0) | (p.crouch ? 16 : 0),
         bf: (p.fireBuffT > 0 ? 1 : 0) | (p.bleedBuffT > 0 ? 2 : 0) | (p.blastBuffT > 0 ? 4 : 0),
         k: p.kills, d: p.deaths,
       })),
@@ -644,8 +646,8 @@ function botThink(room, p, dt) {
 
   const dx = t.x - p.x, dz = t.z - p.z;
   const dist = Math.hypot(dx, dz);
-  const ex = p.x, ey = p.y + EYE_H, ez = p.z;
-  const ddx = t.x - ex, ddy = t.y + 1.2 - ey, ddz = t.z - ez;
+  const ex = p.x, ey = p.y + eyeH(p), ez = p.z;
+  const ddx = t.x - ex, ddy = t.y + (t.crouch ? 0.65 : 1.2) - ey, ddz = t.z - ez;
   const d3 = Math.hypot(ddx, ddy, ddz);
   const visible = rayWalls(ex, ey, ez, ddx / d3, ddy / d3, ddz / d3, d3) >= d3 - 0.3;
   ai.seenT = visible ? ai.seenT + dt : 0;

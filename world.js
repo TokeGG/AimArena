@@ -1,18 +1,19 @@
-// Visual theme: "Olympus arena" - sunset sky, marble and gold, torches, distant mountains.
+// Visual theme: "Olympus at night" - starry sky, dark marble and gold, torch light, distant mountains.
 // Everything here is decoration; collision comes from WALLS in sim.js.
 import * as THREE from 'three';
 import { ARENA, WALLS } from './sim.js';
 
 export const TEAM_COLOR = [0x3b82ff, 0xff5436];
 const GOLD = 0xd4a73a;
-const HAZE = 0xe8b896;
+const HAZE = 0x140f24;
 
 const mat = (color, roughness = 0.6, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
-const MARBLE = mat(0xefe9dc, 0.35);
-const MARBLE_DARK = mat(0xd8d0bd, 0.45);
-const SAND = mat(0xcdb48a, 0.85);
-const SAND_DARK = mat(0xb39a72, 0.9);
+const MARBLE = mat(0x77748c, 0.35, 0.1);
+const MARBLE_DARK = mat(0x4b485f, 0.45, 0.05);
+const SAND = mat(0x5e5148, 0.85);
+const SAND_DARK = mat(0x483e39, 0.9);
 const GOLD_MAT = mat(GOLD, 0.35, 0.6);
+GOLD_MAT.emissive = new THREE.Color(0x3d2c06);
 
 function canvasTexture(w, h, draw, repeat) {
   const c = document.createElement('canvas');
@@ -26,36 +27,42 @@ function canvasTexture(w, h, draw, repeat) {
 }
 
 function skyTexture() {
-  return canvasTexture(8, 512, (g, w, h) => {
+  return canvasTexture(1024, 512, (g, w, h) => {
     const grad = g.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0.0, '#1b3472');
-    grad.addColorStop(0.28, '#4a74b8');
-    grad.addColorStop(0.45, '#9db6d8');
-    grad.addColorStop(0.5, '#f5c08a');
-    grad.addColorStop(0.56, '#f0b88a');
-    grad.addColorStop(1.0, '#e8b896');
+    grad.addColorStop(0.0, '#03040c');
+    grad.addColorStop(0.3, '#0a0d24');
+    grad.addColorStop(0.46, '#2a1a45');
+    grad.addColorStop(0.5, '#5a3560');
+    grad.addColorStop(0.56, '#2b1a40');
+    grad.addColorStop(1.0, '#140f24');
     g.fillStyle = grad;
     g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 380; i++) {
+      const y = Math.random() * h * 0.46;
+      g.fillStyle = `rgba(255,255,255,${0.25 + Math.random() * 0.7})`;
+      const r = Math.random() < 0.12 ? 2 : 1;
+      g.fillRect(Math.random() * w, y, r, r);
+    }
   });
 }
 
 function floorTexture() {
   const S = 1024, k = S / (ARENA * 2);
   return canvasTexture(S, S, (g) => {
-    g.fillStyle = '#cdbb98';
+    g.fillStyle = '#4a4458';
     g.fillRect(0, 0, S, S);
     // checker tint + speckle so the floor reads as stone slabs
     const tile = 4 * k;
     for (let iz = 0; iz < 15; iz++) {
       for (let ix = 0; ix < 15; ix++) {
-        if ((ix + iz) % 2 === 0) { g.fillStyle = 'rgba(255,245,220,.10)'; g.fillRect(ix * tile, iz * tile, tile, tile); }
+        if ((ix + iz) % 2 === 0) { g.fillStyle = 'rgba(190,180,230,.07)'; g.fillRect(ix * tile, iz * tile, tile, tile); }
       }
     }
     for (let i = 0; i < 7000; i++) {
-      g.fillStyle = Math.random() < 0.5 ? 'rgba(90,70,40,.05)' : 'rgba(255,255,255,.05)';
+      g.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,.07)' : 'rgba(200,200,255,.04)';
       g.fillRect(Math.random() * S, Math.random() * S, 2 + Math.random() * 3, 2 + Math.random() * 3);
     }
-    g.strokeStyle = 'rgba(110,90,60,.45)';
+    g.strokeStyle = 'rgba(10,6,20,.6)';
     g.lineWidth = 2;
     for (let i = 0; i <= 15; i++) {
       g.beginPath(); g.moveTo(i * tile, 0); g.lineTo(i * tile, S); g.moveTo(0, i * tile); g.lineTo(S, i * tile); g.stroke();
@@ -65,12 +72,12 @@ function floorTexture() {
       g.fillStyle = rgba;
       g.fillRect((-10.6 + ARENA) * k, (z0 + ARENA) * k, 21.2 * k, (z1 - z0) * k);
     };
-    pocket(-30, -19.5, 'rgba(59,130,255,.30)');
-    pocket(19.5, 30, 'rgba(255,84,54,.30)');
+    pocket(-30, -19.5, 'rgba(59,130,255,.38)');
+    pocket(19.5, 30, 'rgba(255,84,54,.38)');
     // centre emblem: gold rings + sun rays
     g.save();
     g.translate(S / 2, S / 2);
-    g.strokeStyle = '#c9972c';
+    g.strokeStyle = '#b3862a';
     g.lineWidth = 7;
     for (const r of [10.5, 8.2]) { g.beginPath(); g.arc(0, 0, r * k, 0, Math.PI * 2); g.stroke(); }
     g.lineWidth = 4;
@@ -81,8 +88,8 @@ function floorTexture() {
     g.restore();
     // darker edge so the arena sits inside its walls
     const vg = g.createRadialGradient(S / 2, S / 2, S * 0.35, S / 2, S / 2, S * 0.75);
-    vg.addColorStop(0, 'rgba(60,40,20,0)');
-    vg.addColorStop(1, 'rgba(60,40,20,.35)');
+    vg.addColorStop(0, 'rgba(0,0,10,0)');
+    vg.addColorStop(1, 'rgba(0,0,10,.5)');
     g.fillStyle = vg;
     g.fillRect(0, 0, S, S);
   });
@@ -115,6 +122,7 @@ function box(parent, w, h, d, x, y, z, material, shadows = true) {
 }
 
 const flames = [];
+const torchLights = [];
 const flameGeo = new THREE.ConeGeometry(0.17, 0.75, 6);
 flameGeo.translate(0, 0.37, 0);
 const flameMats = [
@@ -137,6 +145,10 @@ function torch(scene, x, z, h = 1.25) {
     g.add(f);
     flames.push(f);
   }
+  const light = new THREE.PointLight(0xff9a45, 45, 20, 2);
+  light.position.set(0, h + 0.9, 0);
+  g.add(light);
+  torchLights.push(light);
   scene.add(g);
 }
 
@@ -193,7 +205,7 @@ function buildWallMesh(scene, w) {
 // ------------------------------------------------------------------ world
 export function buildWorld(scene) {
   scene.background = new THREE.Color(HAZE);
-  scene.fog = new THREE.Fog(HAZE, 55, 200);
+  scene.fog = new THREE.Fog(HAZE, 45, 170);
 
   // sky dome follows the camera
   const sky = new THREE.Mesh(
@@ -203,16 +215,16 @@ export function buildWorld(scene) {
   sky.renderOrder = -10;
   scene.add(sky);
   // sun disc + halo, low on the horizon
-  const sunDir = new THREE.Vector3(-0.55, 0.3, -0.78).normalize();
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(16, 32), new THREE.MeshBasicMaterial({ color: 0xfff1c4, fog: false, depthWrite: false }));
-  const halo = new THREE.Mesh(new THREE.CircleGeometry(46, 32), new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.35, fog: false, depthWrite: false }));
+  const sunDir = new THREE.Vector3(-0.5, 0.42, -0.76).normalize();
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(11, 32), new THREE.MeshBasicMaterial({ color: 0xe8efff, fog: false, depthWrite: false }));
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(40, 32), new THREE.MeshBasicMaterial({ color: 0x7f95ff, transparent: true, opacity: 0.16, fog: false, depthWrite: false }));
   for (const m of [sunDisc, halo]) { m.position.copy(sunDir).multiplyScalar(240); m.lookAt(0, 0, 0); scene.add(m); }
   halo.renderOrder = -9; sunDisc.renderOrder = -8;
 
   // lights
-  const hemi = new THREE.HemisphereLight(0xcfe0ff, 0xb89a76, 0.95);
+  const hemi = new THREE.HemisphereLight(0x7084cc, 0x2a2236, 0.95);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffe1b0, 2.1);
+  const sun = new THREE.DirectionalLight(0xaec2ff, 1.25);
   sun.position.set(-40, 48, -55);
   sun.shadow.camera.left = -50; sun.shadow.camera.right = 50;
   sun.shadow.camera.top = 50; sun.shadow.camera.bottom = -50;
@@ -228,7 +240,7 @@ export function buildWorld(scene) {
   floor.receiveShadow = true;
   scene.add(floor);
   // ground outside the arena
-  const outer = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: 0xb59a74, roughness: 1 }));
+  const outer = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: 0x1d1a26, roughness: 1 }));
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.02;
   scene.add(outer);
@@ -255,7 +267,7 @@ export function buildWorld(scene) {
   // team banners on the back walls
   for (const team of [0, 1]) {
     const tex = bannerTexture(TEAM_COLOR[team]);
-    const b = new THREE.Mesh(new THREE.PlaneGeometry(5, 8.5), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+    const b = new THREE.Mesh(new THREE.PlaneGeometry(5, 8.5), new THREE.MeshBasicMaterial({ map: tex, color: 0xb0b0b8, side: THREE.DoubleSide }));
     b.position.set(0, 4.9, team === 0 ? -ARENA + 0.1 : ARENA - 0.1);
     if (team === 0) b.rotation.y = 0; else b.rotation.y = Math.PI;
     scene.add(b);
@@ -265,7 +277,7 @@ export function buildWorld(scene) {
   for (const [x, z] of [[9.2, -29], [-9.2, -29], [9.2, 29], [-9.2, 29], [-29, 0], [29, 0], [0, -17.6], [0, 17.6]]) torch(scene, x, z);
 
   // distant mountains (hazy silhouettes)
-  const mtnMat = new THREE.MeshStandardMaterial({ color: 0x8d7b8c, roughness: 1, flatShading: true });
+  const mtnMat = new THREE.MeshStandardMaterial({ color: 0x1c1730, roughness: 1, flatShading: true });
   for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2 + Math.random() * 0.2;
     const r = 150 + Math.random() * 30;
@@ -276,7 +288,7 @@ export function buildWorld(scene) {
   }
   // drifting clouds
   const clouds = [];
-  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xfff3e6, transparent: true, opacity: 0.8, fog: false, depthWrite: false });
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0x4a3f6e, transparent: true, opacity: 0.35, fog: false, depthWrite: false });
   for (let i = 0; i < 9; i++) {
     const c = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), cloudMat);
     c.scale.set(24 + Math.random() * 20, 4 + Math.random() * 3, 9 + Math.random() * 6);
@@ -306,6 +318,7 @@ export function buildWorld(scene) {
     renderer.shadowMap.enabled = high;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     sun.castShadow = high;
+    for (const l of torchLights) l.visible = high;
     sun.shadow.mapSize.set(high ? 2048 : 512, high ? 2048 : 512);
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
     scene.traverse((o) => {
@@ -336,5 +349,84 @@ export function buildShowroom(scene) {
   scene.add(g);
   torch(scene, SHOWROOM.x - 3.6, SHOWROOM.z + 1.5, 1.4);
   torch(scene, SHOWROOM.x + 3.6, SHOWROOM.z + 1.5, 1.4);
+  return g;
+}
+
+// ------------------------------------------------------------------ player models
+// One humanoid per class. Faces -z, gun hand on +x. All of them fit inside the shared hitbox
+// (radius 0.5, height 1.8), so the silhouette never changes who can hit whom.
+const STEEL = mat(0x9aa2b8, 0.35, 0.7);
+const DARKM = mat(0x1f1c2b, 0.6, 0.2);
+const SKIN = mat(0xd9b79a, 0.7);
+const WHITE = mat(0xe9e5f2, 0.55);
+const GLOW_CYAN = new THREE.MeshBasicMaterial({ color: 0x7ff3ff });
+const GLOW_ORANGE = new THREE.MeshBasicMaterial({ color: 0xff8a3a });
+const GLOW_GREEN = new THREE.MeshBasicMaterial({ color: 0x8dffb4 });
+const GEO = new Map();
+const geo = (key, make) => { if (!GEO.has(key)) GEO.set(key, make()); return GEO.get(key); };
+const bx = (w, h, d) => geo(`b${w},${h},${d}`, () => new THREE.BoxGeometry(w, h, d));
+const sp = (r) => geo(`s${r}`, () => new THREE.SphereGeometry(r, 14, 10));
+
+function part(group, g, material, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
+  const m = new THREE.Mesh(g, material);
+  m.position.set(x, y, z);
+  m.rotation.x = rx; m.rotation.y = ry; m.rotation.z = rz;
+  if (sx !== 1 || sy !== 1 || sz !== 1) m.scale.set(sx, sy, sz);
+  m.castShadow = true;
+  group.add(m);
+  return m;
+}
+
+export function buildModel(model, teamColor) {
+  const team = new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.5, metalness: 0.15, emissive: teamColor, emissiveIntensity: 0.3 });
+  const g = new THREE.Group();
+  if (model === 'vanguard') {
+    for (const s of [-1, 1]) part(g, bx(0.28, 0.8, 0.3), STEEL, s * 0.18, 0.4, 0);
+    part(g, bx(0.86, 0.66, 0.52), team, 0, 1.1, 0);
+    part(g, bx(0.7, 0.4, 0.08), STEEL, 0, 1.15, -0.3);
+    part(g, bx(0.14, 0.14, 0.03), GOLD_MAT, 0, 1.17, -0.35);
+    for (const s of [-1, 1]) {
+      part(g, sp(0.27), STEEL, s * 0.55, 1.38, 0, 0, 0, 0, 1, 0.8, 1.1);
+      part(g, bx(0.22, 0.55, 0.22), team, s * 0.56, 0.98, 0);
+    }
+    part(g, bx(0.1, 0.8, 0.5), STEEL, -0.7, 1.0, -0.12);
+    part(g, bx(0.12, 0.1, 0.52), GOLD_MAT, -0.7, 1.42, -0.12);
+    part(g, bx(0.34, 0.34, 0.36), STEEL, 0, 1.54, 0);
+    part(g, bx(0.28, 0.06, 0.04), GLOW_ORANGE, 0, 1.55, -0.19);
+    part(g, bx(0.06, 0.16, 0.34), GOLD_MAT, 0, 1.73, 0);
+  } else if (model === 'phantom') {
+    for (const s of [-1, 1]) part(g, bx(0.15, 0.8, 0.18), DARKM, s * 0.1, 0.4, 0);
+    part(g, bx(0.38, 0.56, 0.22), DARKM, 0, 1.08, 0);
+    part(g, bx(0.42, 0.09, 0.25), team, 0, 0.9, 0, 0, 0, 0.35);
+    for (const s of [-1, 1]) part(g, bx(0.1, 0.5, 0.1), DARKM, s * 0.26, 1.06, -0.04);
+    part(g, sp(0.15), DARKM, 0, 1.52, 0);
+    part(g, geo('cone', () => new THREE.ConeGeometry(0.2, 0.42, 10)), DARKM, 0, 1.6, 0.03);
+    for (const s of [-1, 1]) part(g, bx(0.07, 0.03, 0.02), GLOW_CYAN, s * 0.06, 1.53, -0.15);
+    part(g, bx(0.5, 0.9, 0.04), team, 0, 1.0, 0.17, 0.12);
+    part(g, bx(0.14, 0.05, 0.6), team, 0, 1.4, 0.4, 0.3);
+  } else if (model === 'warden') {
+    part(g, geo('robe', () => new THREE.CylinderGeometry(0.26, 0.5, 1.0, 16)), team, 0, 0.5, 0);
+    part(g, geo('trim', () => new THREE.TorusGeometry(0.49, 0.03, 8, 28)), GOLD_MAT, 0, 0.06, 0, Math.PI / 2);
+    part(g, geo('top', () => new THREE.CylinderGeometry(0.27, 0.27, 0.4, 14)), WHITE, 0, 1.2, 0);
+    part(g, geo('mantle', () => new THREE.CylinderGeometry(0.3, 0.4, 0.14, 14)), GOLD_MAT, 0, 1.4, 0);
+    for (const s of [-1, 1]) part(g, bx(0.12, 0.45, 0.12), WHITE, s * 0.34, 1.08, -0.03);
+    part(g, sp(0.17), SKIN, 0, 1.56, 0);
+    part(g, geo('halo', () => new THREE.TorusGeometry(0.24, 0.025, 8, 28)), GLOW_GREEN, 0, 1.84, 0, Math.PI / 2);
+    part(g, geo('staff', () => new THREE.CylinderGeometry(0.025, 0.025, 1.7, 8)), GOLD_MAT, -0.44, 0.85, -0.15);
+    part(g, sp(0.1), GLOW_GREEN, -0.44, 1.76, -0.15);
+  } else { // striker
+    for (const s of [-1, 1]) {
+      part(g, bx(0.2, 0.8, 0.24), DARKM, s * 0.13, 0.4, 0);
+      part(g, bx(0.22, 0.12, 0.32), STEEL, s * 0.13, 0.06, -0.04);
+    }
+    part(g, bx(0.54, 0.58, 0.32), team, 0, 1.09, 0);
+    part(g, bx(0.56, 0.1, 0.34), DARKM, 0, 0.79, 0);
+    part(g, bx(0.4, 0.3, 0.05), STEEL, 0, 1.15, -0.18);
+    for (const s of [-1, 1]) part(g, bx(0.14, 0.5, 0.14), team, s * 0.36, 1.06, -0.05);
+    part(g, sp(0.18), SKIN, 0, 1.55, 0);
+    part(g, geo('helm', () => new THREE.SphereGeometry(0.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2)), DARKM, 0, 1.56, 0);
+    part(g, bx(0.3, 0.07, 0.05), GLOW_CYAN, 0, 1.55, -0.18);
+    part(g, bx(0.34, 0.4, 0.16), DARKM, 0, 1.1, 0.24);
+  }
   return g;
 }

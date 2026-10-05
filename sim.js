@@ -1,7 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.3.0'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.4.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
@@ -10,6 +10,12 @@ export const PLAYER_R = 0.45;
 export const PLAYER_H = 1.8;
 export const EYE_H = 1.6;
 export const HEAD_Y = 1.45; // hits above this height (relative to feet) are headshots
+// Crouching: slower, lower eyes and a smaller hitbox (no jumping while crouched).
+export const CROUCH_H = 1.15;
+export const CROUCH_EYE = 0.95;
+export const CROUCH_HEAD_Y = 0.8;
+export const CROUCH_SPEED = 0.5;
+export const eyeH = (p) => (p.crouch ? CROUCH_EYE : EYE_H);
 export const HIT_R = 0.5; // hitscan hit radius (slightly generous)
 export const MOVE_SPEED = 7;
 export const JUMP_V = 7.5;
@@ -151,7 +157,8 @@ export function stepPlayer(p, inp, dt) {
   // status effects: rooted = cannot move, jump or dash; slowed = reduced speed
   const rooted = (p.rootT || 0) > 0;
   if (rooted) { wx = 0; wz = 0; p.dashT = 0; p.dvx = 0; p.dvz = 0; }
-  const speed = (p.speed || MOVE_SPEED) * ((p.slowT || 0) > 0 ? SLOW_FACTOR : 1);
+  p.crouch = !!inp.crouch;
+  const speed = (p.speed || MOVE_SPEED) * ((p.slowT || 0) > 0 ? SLOW_FACTOR : 1) * (p.crouch ? CROUCH_SPEED : 1);
   if (p.rootT > 0) p.rootT = Math.max(0, p.rootT - dt);
   if (p.slowT > 0) p.slowT = Math.max(0, p.slowT - dt);
 
@@ -160,7 +167,7 @@ export function stepPlayer(p, inp, dt) {
   const k = Math.min(1, (grounded ? 16 : 3) * dt);
   p.vx += (wx * speed - p.vx) * k;
   p.vz += (wz * speed - p.vz) * k;
-  if (inp.jump && grounded && !rooted) p.vy = JUMP_V;
+  if (inp.jump && grounded && !rooted && !p.crouch) p.vy = JUMP_V;
   p.vy -= GRAVITY * dt;
 
   let ny = p.y + p.vy * dt;
@@ -230,6 +237,7 @@ export function rayPlayer(ox, oy, oz, dx, dy, dz, p) {
   const t = (-b - Math.sqrt(disc)) / (2 * a);
   if (t < 0) return null;
   const y = oy + dy * t;
-  if (y < p.y || y > p.y + PLAYER_H) return null;
-  return { t, head: y - p.y > HEAD_Y };
+  const top = p.crouch ? CROUCH_H : PLAYER_H;
+  if (y < p.y || y > p.y + top) return null;
+  return { t, head: y - p.y > (p.crouch ? CROUCH_HEAD_Y : HEAD_Y) };
 }

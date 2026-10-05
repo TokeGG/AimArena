@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import {
-  DT, EYE_H, FIRE_INTERVAL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL,
+  DT, EYE_H, eyeH, FIRE_INTERVAL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL,
   MOVE_SPEED, VERSION, stepPlayer, lookDir, rayWorld, spawnPoint,
 } from '/sim.js';
-import { TEAM_COLOR, buildWorld, buildShowroom, SHOWROOM } from '/world.js';
+import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.3.0';
+const CLIENT_VERSION = '0.4.0';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -177,45 +177,13 @@ const discGeo = new THREE.CircleGeometry(0.62, 24);
 const rootGeo = new THREE.RingGeometry(0.55, 0.75, 28);
 const rootMat = new THREE.MeshBasicMaterial({ color: 0xb36bff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
 
-// Each model gets its own silhouette (hitbox is identical for all models).
-const geoCache = new Map();
-function modelParts(model) {
-  if (geoCache.has(model)) return geoCache.get(model);
-  const T = (g, x, y, z) => { g.translate(x, y, z); return g; };
-  let parts;
-  if (model === 'vanguard') {
-    parts = {
-      body: T(new THREE.BoxGeometry(0.85, 1.3, 0.55), 0, 0.65, 0), head: T(new THREE.SphereGeometry(0.24, 16, 12), 0, 1.57, 0),
-      extras: [T(new THREE.BoxGeometry(0.32, 0.26, 0.55), -0.58, 1.25, 0), T(new THREE.BoxGeometry(0.32, 0.26, 0.55), 0.58, 1.25, 0)],
-    };
-  } else if (model === 'phantom') {
-    parts = {
-      body: T(new THREE.CylinderGeometry(0.2, 0.34, 1.3, 14), 0, 0.65, 0), head: T(new THREE.SphereGeometry(0.2, 16, 12), 0, 1.55, 0),
-      extras: [T(new THREE.BoxGeometry(0.34, 0.07, 0.12), 0, 1.58, -0.17)], bright: true,
-    };
-  } else if (model === 'warden') {
-    parts = {
-      body: T(new THREE.CylinderGeometry(0.4, 0.34, 1.3, 14), 0, 0.65, 0), head: T(new THREE.SphereGeometry(0.22, 16, 12), 0, 1.55, 0),
-      extras: [T(new THREE.TorusGeometry(0.3, 0.035, 8, 24), 0, 1.98, 0)], halo: true,
-    };
-  } else {
-    parts = { body: T(new THREE.CylinderGeometry(0.38, 0.38, 1.3, 14), 0, 0.65, 0), head: T(new THREE.SphereGeometry(0.22, 16, 12), 0, 1.55, 0), extras: [] };
-  }
-  geoCache.set(model, parts);
-  return parts;
-}
-const brightMat = new THREE.MeshBasicMaterial({ color: 0xaaf6ff });
-const haloMat = new THREE.MeshBasicMaterial({ color: 0xfff3a0 });
-
 function makeEntity(pd) {
   const color = TEAM_COLOR[pd.tm];
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, emissive: color, emissiveIntensity: 0.3 });
   const group = new THREE.Group();
-  const parts = modelParts(pd.md || DEFAULT_MODEL);
-  group.add(new THREE.Mesh(parts.body, mat), new THREE.Mesh(parts.head, mat));
-  for (const g of parts.extras) group.add(new THREE.Mesh(g, parts.bright ? brightMat : parts.halo ? haloMat : mat));
+  group.add(buildModel(pd.md || DEFAULT_MODEL, color));
   const g = new THREE.Mesh(gunGeo, darkMat);
   g.position.set(0.3, 1.0, -0.4);
+  g.castShadow = true;
   group.add(g);
   const shield = new THREE.Mesh(shieldGeo, new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.22, depthWrite: false }));
   shield.position.y = 0.9;
@@ -245,13 +213,12 @@ function makeEntity(pd) {
   sprite.position.y = 2.25;
   sprite.renderOrder = 10;
   group.add(sprite);
-  group.traverse((o) => { if (o.isMesh && o !== shield && !Object.values(auras).includes(o) && o !== root) o.castShadow = true; });
   const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthWrite: false }));
   disc.rotation.x = -Math.PI / 2;
   disc.position.y = 0.035;
   group.add(disc);
   scene.add(group);
-  return { group, shield, auras, root, sprite, cv, tex, key: '', x: pd.x, y: pd.y, z: pd.z, yaw: pd.yaw, pit: pd.pit };
+  return { group, shield, auras, root, sprite, cv, tex, cy: 1, key: '', x: pd.x, y: pd.y, z: pd.z, yaw: pd.yaw, pit: pd.pit };
 }
 
 // Menu showroom: the chosen model turns on a podium next to the menu panel.
@@ -365,21 +332,22 @@ function ring(x, y, z, color, maxR, dur, vertical = false) {
 
 // ------------------------------------------------------------------ game state
 let ws = null;
-let playing = false, locked = false, mouseDown = false;
+let playing = false, locked = false;
 let myId = -1, myTeam = 0;
 let yaw = 0, pitch = 0;
 let seq = 0, pending = [];
-let fireCd = 0, kick = 0, flashT = 0;
+let shotCount = 0;
+let fireCd = 0, kick = 0, flashT = 0, shootBuf = 0, eyeCur = EYE_H;
 let castQ = false, castE = false, castR = false;
 const keys = {};
-const me = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0, slowT: 0, speed: MOVE_SPEED };
+const me = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0, slowT: 0, speed: MOVE_SPEED, crouch: false };
 let meAlive = true, meHp = 100, meMax = 100, meSf = 0, meBf = 0, meCd = [0, 0, 0], meLoadout = cfg.loadout, cdAt = 0;
 const errOff = { x: 0, y: 0, z: 0 };
 let snaps = [], latest = null, snapAt = 0;
 let phase = 'countdown', phaseT = 0;
 let pingMs = 0;
 
-const toState = (st) => ({ x: st.x, y: st.y, z: st.z, vx: st.vx, vy: st.vy, vz: st.vz, dvx: st.dvx, dvz: st.dvz, dashT: st.dashT, rootT: st.rootT || 0, slowT: st.slowT || 0 });
+const toState = (st) => ({ crouch: me.crouch,  x: st.x, y: st.y, z: st.z, vx: st.vx, vy: st.vy, vz: st.vz, dvx: st.dvx, dvz: st.dvz, dashT: st.dashT, rootT: st.rootT || 0, slowT: st.slowT || 0 });
 
 function buildSpellHud() {
   const box = $('spells');
@@ -535,13 +503,12 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') e.preventDefault();
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; shootBuf = 0; });
 canvas.addEventListener('mousedown', (e) => {
   if (!playing) return;
   if (!locked) { canvas.requestPointerLock(); return; }
-  if (e.button === 0) mouseDown = true;
+  if (e.button === 0) shootBuf = 0.14; // semi-auto: one click = one shot (with a short buffer so fast clicks are not lost)
 });
-window.addEventListener('mouseup', (e) => { if (e.button === 0) mouseDown = false; });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('mousemove', (e) => {
   if (!locked || !playing) return;
@@ -551,7 +518,7 @@ window.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
-  if (!locked) mouseDown = false;
+  if (!locked) shootBuf = 0;
   $('pause').classList.toggle('hidden', locked || !playing);
 });
 
@@ -570,6 +537,7 @@ $('leave').onclick = () => location.reload();
 function step() {
   if (!playing || !ws || ws.readyState !== 1) return;
   fireCd = Math.max(0, fireCd - DT);
+  shootBuf = Math.max(0, shootBuf - DT);
   if (!meAlive || phase === 'countdown') { castQ = castE = castR = false; return; }
   const inp = {
     seq: ++seq,
@@ -577,9 +545,11 @@ function step() {
     mz: (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0),
     yaw, pitch,
     jump: !!keys.Space,
-    shoot: mouseDown && locked,
+    crouch: !!(keys.KeyC || keys.ShiftLeft || keys.ShiftRight),
+    shoot: false,
     q: castQ, e: castE, r: castR,
   };
+  if (shootBuf > 0 && locked && phase === 'live' && fireCd <= 0) { inp.shoot = true; shootBuf = 0; }
   // Tell the server which moment of the world we are looking at, so it can rewind enemies to match.
   if (inp.shoot || inp.q || inp.e || inp.r) inp.vt = viewTick(performance.now());
   castQ = castE = castR = false;
@@ -587,7 +557,7 @@ function step() {
   pending.push(inp);
   if (pending.length > 120) pending.shift();
   ws.send(JSON.stringify({ t: 'in', ...inp }));
-  if (inp.shoot && phase === 'live' && fireCd <= 0) { fireCd = FIRE_INTERVAL; localShot(); }
+  if (inp.shoot) { fireCd = FIRE_INTERVAL; localShot(); }
 }
 
 /** Fractional server tick that other players are currently drawn at (same logic as sampleRemote). */
@@ -605,8 +575,9 @@ function viewTick(now) {
 }
 
 function localShot() {
+  shotCount++;
   const [dx, dy, dz] = lookDir(yaw, pitch);
-  const ex = me.x, ey = me.y + EYE_H, ez = me.z;
+  const ex = me.x, ey = me.y + eyeH(me), ez = me.z;
   let t = rayWorld(ex, ey, ez, dx, dy, dz, 80);
   if (!Number.isFinite(t)) t = 80;
   const rx = Math.cos(yaw), rz = -Math.sin(yaw);
@@ -686,7 +657,7 @@ function render(dt, now) {
     if (!ent) { ent = makeEntity(pd); ent.model = pd.md || DEFAULT_MODEL; ents.set(pd.id, ent); }
     if (pd.id === myId) { ent.group.visible = false; continue; }
     const s = sampleRemote(pd.id, now) || pd;
-    ent.x = s.x; ent.y = s.y; ent.z = s.z; ent.yaw = s.yaw; ent.pit = s.pit;
+    ent.eye = EYE_H; ent.x = s.x; ent.y = s.y; ent.z = s.z; ent.yaw = s.yaw; ent.pit = s.pit;
     ent.group.visible = !!pd.a;
     ent.group.position.set(s.x, s.y, s.z);
     ent.group.rotation.y = s.yaw;
@@ -695,6 +666,11 @@ function render(dt, now) {
     ent.auras.bleed.visible = !!(pd.sf & 8) && !(pd.sf & 4);
     ent.auras.slow.visible = !!(pd.sf & 2) && !(pd.sf & 12);
     ent.root.visible = !!(pd.sf & 1);
+    const crouching = !!(pd.sf & 16);
+    ent.cy += ((crouching ? 0.64 : 1) - ent.cy) * Math.min(1, dt * 14);
+    ent.group.scale.set(1, ent.cy, 1);
+    ent.sprite.scale.set(2.2, 0.62 / ent.cy, 1);
+    ent.eye = crouching ? 0.95 : EYE_H;
     drawTag(ent, pd, pd.tm === myTeam);
     if (pd.a && pd.tm === myTeam && !spectateTarget) spectateTarget = ent;
   }
@@ -712,11 +688,12 @@ function render(dt, now) {
   const decay = Math.exp(-12 * dt);
   errOff.x *= decay; errOff.y *= decay; errOff.z *= decay;
   if (meAlive) {
-    camera.position.set(me.x + errOff.x, me.y + EYE_H + errOff.y, me.z + errOff.z);
+    eyeCur += (eyeH(me) - eyeCur) * Math.min(1, dt * 16);
+    camera.position.set(me.x + errOff.x, me.y + eyeCur + errOff.y, me.z + errOff.z);
     camera.rotation.set(pitch, yaw, 0);
     gun.visible = true;
   } else if (spectateTarget) {
-    camera.position.set(spectateTarget.x, spectateTarget.y + EYE_H, spectateTarget.z);
+    camera.position.set(spectateTarget.x, spectateTarget.y + spectateTarget.eye, spectateTarget.z);
     camera.rotation.set(spectateTarget.pit, spectateTarget.yaw, 0);
     gun.visible = false;
   }
@@ -811,5 +788,7 @@ window.__aim = {
   get latest() { return latest; },
   get pending() { return pending; },
   get alive() { return meAlive; },
-  forceFire(v) { locked = v; mouseDown = v; },
+  get shots() { return shotCount; },
+  get myId() { return myId; },
+  forceFire(v) { locked = v; shootBuf = v ? 0.14 : 0; },
 };
