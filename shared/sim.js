@@ -25,7 +25,28 @@ export const SPELLS = {
   shield: { name: 'Shield', cd: 14, desc: 'Take 60% less damage for 2.5s.' },
   heal: { name: 'Heal', cd: 18, desc: 'Instantly restore 35 HP.' },
   shockwave: { name: 'Shockwave', cd: 12, desc: 'Damage and knock back enemies within 6m.' },
+  bind: { name: 'Bind', cd: 11, desc: 'Instant shot along your crosshair: roots the first enemy hit for 1.8s.' },
+  firepool: { name: 'Fire Pool', cd: 14, desc: 'Ignite the ground where you aim: 3m wide, burns enemies for 5s.' },
+  nova: { name: 'Frost Nova', cd: 12, desc: 'Blast within 5m: 12 damage and 3s slow on enemies.' },
+  incendiary: { name: 'Incendiary Rounds', cd: 16, desc: '6s: rifle hits leave fire under the target\'s feet.' },
+  barbed: { name: 'Barbed Rounds', cd: 14, desc: '6s: rifle hits make the target bleed (worse when moving).' },
+  explosive: { name: 'Explosive Rounds', cd: 15, desc: '6s: rifle hits explode for area damage within 3m.' },
 };
+
+export const SLOT_KEYS = ['Q', 'E', 'R'];
+export const SLOT_COUNT = 3;
+export const DEFAULT_LOADOUT = ['dash', 'heal', 'shield'];
+
+export const MODELS = {
+  striker: { name: 'Striker', hp: 100, speed: 7, healMult: 1, desc: 'Balanced. 100 HP, speed 7.' },
+  vanguard: { name: 'Vanguard', hp: 130, speed: 6.2, healMult: 1, desc: 'Tanky but slower. 130 HP, speed 6.2.' },
+  phantom: { name: 'Phantom', hp: 80, speed: 8, healMult: 1, desc: 'Fast and fragile. 80 HP, speed 8.' },
+  warden: { name: 'Warden', hp: 105, speed: 6.8, healMult: 1.5, desc: 'Sturdy. 105 HP, heals 50% more.' },
+};
+export const DEFAULT_MODEL = 'striker';
+
+// Status tuning (shared so the client HUD and server agree)
+export const SLOW_FACTOR = 0.55;
 
 // ---------------------------------------------------------------- map
 function buildWalls() {
@@ -110,12 +131,19 @@ export function stepPlayer(p, inp, dt) {
   const l = Math.hypot(wx, wz);
   if (l > 1) { wx /= l; wz /= l; }
 
+  // status effects: rooted = cannot move, jump or dash; slowed = reduced speed
+  const rooted = (p.rootT || 0) > 0;
+  if (rooted) { wx = 0; wz = 0; p.dashT = 0; p.dvx = 0; p.dvz = 0; }
+  const speed = (p.speed || MOVE_SPEED) * ((p.slowT || 0) > 0 ? SLOW_FACTOR : 1);
+  if (p.rootT > 0) p.rootT = Math.max(0, p.rootT - dt);
+  if (p.slowT > 0) p.slowT = Math.max(0, p.slowT - dt);
+
   const floor = floorAt(p.x, p.z, p.y);
   const grounded = p.y <= floor + 0.01 && p.vy <= 0;
   const k = Math.min(1, (grounded ? 16 : 3) * dt);
-  p.vx += (wx * MOVE_SPEED - p.vx) * k;
-  p.vz += (wz * MOVE_SPEED - p.vz) * k;
-  if (inp.jump && grounded) p.vy = JUMP_V;
+  p.vx += (wx * speed - p.vx) * k;
+  p.vz += (wz * speed - p.vz) * k;
+  if (inp.jump && grounded && !rooted) p.vy = JUMP_V;
   p.vy -= GRAVITY * dt;
 
   let ny = p.y + p.vy * dt;
