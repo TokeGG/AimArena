@@ -1,0 +1,12 @@
+{
+  "name": "aim-arena",
+  "version": "0.1.0",
+  "description": "2v2 / 3v3 arena shooter with abilities (browser + Node, zero npm dependencies)",
+  "type": "module",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/headless.mjs"
+  }
+}
