@@ -78,7 +78,7 @@ async function handleAdmin(req, res, route) {
   if (!adminLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many attempts' });
   if (!sameKey(req.headers['x-admin-key'] || '', ADMIN_KEY)) return sendJson(res, 401, { ok: false, error: 'Wrong key' });
   if (route === '/api/admin/log' && req.method === 'GET') {
-    const online = [...sockets].filter((w) => w.player).map((w) => ({ name: w.player.name, uid: w.player.uid, ip: w.ipH, room: w.room.rid, mode: w.room.mode }));
+    const online = [...sockets].filter((w) => w.player).map((w) => ({ name: w.player.name, uid: w.player.uid || '', ip: w.ipH || '', room: w.room ? w.room.rid : '-', mode: w.room ? w.room.mode : '-' }));
     return sendJson(res, 200, { ok: true, log: mod.list(200), bans: mod.bans(), online });
   }
   if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
@@ -117,7 +117,7 @@ async function handleApi(req, res, route) {
       const u = await auth.userFromToken(bearer(req));
       return u ? sendJson(res, 200, { ok: true, profile: publicProfile(u) }) : sendJson(res, 401, { ok: false, error: 'Not signed in' });
     }
-    if (route.startsWith('/api/admin/')) return handleAdmin(req, res, route);
+    if (route.startsWith('/api/admin/')) return await handleAdmin(req, res, route);
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
     if (!authLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many attempts, wait a minute' });
     if (route === '/api/logout') {

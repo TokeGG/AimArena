@@ -7,7 +7,7 @@ import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.8.2';
+const CLIENT_VERSION = '0.8.3';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -1165,8 +1165,13 @@ $('dailyclose').onclick = () => { $('daily').classList.add('hidden'); clearInter
 {
   const KEY = 'aim-admin-key';
   const adApi = async (path, body) => {
-    const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'x-admin-key': $('adkey').value, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-    return r.json().catch(() => ({ ok: false, error: `Server answered ${r.status}` }));
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 12000);
+    try {
+      const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'x-admin-key': $('adkey').value, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: ac.signal, cache: 'no-store' });
+      return await r.json().catch(() => ({ ok: false, error: `Server answered ${r.status}` }));
+    } catch (e) {
+      return { ok: false, error: e && e.name === 'AbortError' ? 'The server did not answer in 12 seconds. Try again.' : 'Could not reach the server' };
+    } finally { clearTimeout(timer); }
   };
   const tabShow = (name) => {
     document.querySelectorAll('#admin .tabs [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
@@ -1181,9 +1186,11 @@ $('dailyclose').onclick = () => { $('daily').classList.add('hidden'); clearInter
     try { sessionStorage.setItem(KEY, $('adkey').value); } catch { /* ignore */ }
     $('adstatus').textContent = '';
     $('adbody').classList.remove('hidden');
+    try {
     $('adt-online').innerHTML = `<table><tr><th>Name</th><th>Account</th><th>IP hash</th><th>Room</th><th></th></tr>${d.online.map((o) => `<tr><td>${esc(o.name)}</td><td>${esc(o.uid || 'guest')}</td><td><code>${esc(o.ip)}</code></td><td>${esc(o.room)} (${esc(o.mode)})</td><td>${o.uid ? quickBtn('user', o.uid, 'Ban account') : ''} ${quickBtn('ip', o.ip, 'Ban IP')}</td></tr>`).join('') || '<tr><td colspan="5">Nobody online.</td></tr>'}</table>`;
     $('adt-log').innerHTML = `<table><tr><th>When</th><th>Type</th><th>Who</th><th>IP hash</th><th>Detail</th></tr>${d.log.map((e) => `<tr><td>${esc(new Date(e.t).toLocaleString())}</td><td class="k-${esc(e.kind)} sev-${esc(e.sev || '')}">${esc(e.kind)}${e.flag ? ' / ' + esc(e.flag) : ''}${e.reason ? ' / ' + esc(e.reason) : ''}${e.sev ? ' (' + esc(e.sev) + ')' : ''}</td><td>${esc(e.who)}${e.by ? `<br><small>by ${esc(e.by)}</small>` : ''}</td><td><code>${esc(e.ip || '')}</code></td><td>${esc(e.detail || '')}</td></tr>`).join('') || '<tr><td colspan="5">Nothing flagged yet.</td></tr>'}</table>`;
     $('adt-bans').innerHTML = `<table><tr><th>Type</th><th>Id</th><th>Until</th><th>Reason</th><th></th></tr>${d.bans.map((b) => `<tr><td>${esc(b.type)}</td><td>${esc(b.id)}</td><td>${b.until ? esc(new Date(b.until).toLocaleString()) : 'permanent'}</td><td>${esc(b.reason)}</td><td><button data-un="${esc(b.type)}|${esc(b.id)}">Unban</button></td></tr>`).join('') || '<tr><td colspan="5">No active bans.</td></tr>'}</table>`;
+    } catch (e) { $('adstatus').textContent = `Could not draw the panel: ${e && e.message}`; }
   }
   $('adminbtn').onclick = () => {
     $('admin').classList.remove('hidden');
