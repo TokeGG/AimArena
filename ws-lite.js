@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-const MAX_PAYLOAD = 65536;
+const MAX_PAYLOAD = 8192; // every legitimate game message is far smaller than this
 
 class MiniSocket extends EventEmitter {
   constructor(socket) {
@@ -92,16 +92,18 @@ class MiniSocket extends EventEmitter {
   send(str) { this.writeFrame(0x1, Buffer.from(str)); }
 }
 
-export function attachWebSocket(httpServer, onConnection) {
+/** `verify(req)` may veto a connection (origin check, per-IP limits) before the handshake completes. */
+export function attachWebSocket(httpServer, onConnection, verify) {
   httpServer.on('upgrade', (req, socket) => {
     const key = req.headers['sec-websocket-key'];
     if (String(req.headers.upgrade).toLowerCase() !== 'websocket' || !key) { socket.destroy(); return; }
+    if (verify && !verify(req)) { socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); socket.destroy(); return; }
     const accept = crypto.createHash('sha1').update(key + GUID).digest('base64');
     socket.write(
       'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     );
     socket.setNoDelay(true);
-    onConnection(new MiniSocket(socket));
+    onConnection(new MiniSocket(socket), req);
   });
 }

@@ -1,7 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.8.0'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.6.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
@@ -19,7 +19,7 @@ export const HIT_R = 0.5; // hitscan hit radius (slightly generous)
 export const MOVE_SPEED = 7;
 export const JUMP_V = 7.5;
 export const GRAVITY = 22;
-export const MAX_HP = 100;
+export const MAX_HP = 150;
 
 export const FIRE_INTERVAL = 1.0; // one shot per second
 export const AMMO_START = 15;     // rounds at the start of every round / life
@@ -32,7 +32,7 @@ export const RANGE = 100;
 export const SPELLS = {
   dash: { name: 'Dash', cd: 5, cost: 1, desc: 'Burst of speed in your move direction.' },
   shield: { name: 'Shield', cd: 14, cost: 2, desc: 'Take 40% less damage for 2.5s.' },
-  heal: { name: 'Heal', cd: 18, cost: 2, desc: 'Instantly restore 35 HP.' },
+  heal: { name: 'Heal', cd: 18, cost: 2, desc: 'Instantly restore 50 HP.' },
   shockwave: { name: 'Shockwave', cd: 10, cost: 2, desc: 'Aimed shot: pushes the first enemy hit back. No damage.' },
   pushback: { name: 'Pushback', cd: 10, cost: 2, desc: 'Blast that shoves every enemy within 7m away from you. No damage.' },
   bind: { name: 'Bind', cd: 11, cost: 2, desc: 'Your next rifle shot roots the enemy it hits for 1.8s (6s to use it).' },
@@ -43,6 +43,11 @@ export const SPELLS = {
   grapple: { name: 'Grapple', cd: 8, cost: 2, desc: 'Hook the wall you aim at and pull yourself to it (up to 28m).' },
   smoke: { name: 'Smoke', cd: 14, cost: 1, desc: 'Throw a smoke cloud where you aim. Blocks sight for 7s.' },
   decoy: { name: 'Decoy', cd: 16, cost: 1, desc: 'A fake copy of you runs forward for 6s. Enemy shots at it are wasted.' },
+  slowtrap: { name: 'Slow Trap', cd: 12, cost: 1, desc: 'Drop a mine where you stand (max 2). The first enemy to step on it is slowed for 3s.' },
+  mark: { name: 'Mark', cd: 14, cost: 1, desc: 'Tag the enemy you aim at: your team sees them through walls for 5s.' },
+  gravity: { name: 'Gravity Well', cd: 16, cost: 2, desc: 'Pull everything in a 4.5m field toward its centre for 2.5s, slowing enemies caught in it.' },
+  polymorph: { name: 'Polymorph', cd: 18, cost: 2, desc: 'Aimed shot: turns the enemy into a sheep for 2s. They can still move, but cannot shoot or use skills.' },
+  overcharge: { name: 'Overcharge', cd: 14, cost: 2, desc: 'Your next rifle shot deals double damage (6s to use it).' },
 };
 // Skill points: you pick 3 skills but can only spend this many points on them.
 export const LOADOUT_BUDGET = 5;
@@ -55,10 +60,10 @@ export const DEFAULT_LOADOUT = ['dash', 'heal', 'shield'];
 // Every character plays exactly the same (100 HP, same speed). The "model" is only the body style you wear;
 // the rest of your look (helmet, shoulders, back piece, material, colours) lives in `look` below.
 export const MODELS = {
-  striker: { name: 'Striker', hp: 100, speed: 7, healMult: 1, blurb: 'Plated combat armour' },
-  vanguard: { name: 'Vanguard', hp: 100, speed: 7, healMult: 1, blurb: 'Heavy bulwark frame' },
-  phantom: { name: 'Phantom', hp: 100, speed: 7, healMult: 1, blurb: 'Sleek stealth suit' },
-  warden: { name: 'Warden', hp: 100, speed: 7, healMult: 1, blurb: 'Long-coat sentinel' },
+  striker: { name: 'Striker', hp: 150, speed: 7, healMult: 1, blurb: 'Plated combat armour' },
+  vanguard: { name: 'Vanguard', hp: 150, speed: 7, healMult: 1, blurb: 'Heavy bulwark frame' },
+  phantom: { name: 'Phantom', hp: 150, speed: 7, healMult: 1, blurb: 'Sleek stealth suit' },
+  warden: { name: 'Warden', hp: 150, speed: 7, healMult: 1, blurb: 'Long-coat sentinel' },
 };
 export const DEFAULT_MODEL = 'striker';
 
@@ -243,10 +248,11 @@ export function rayPlayer(ox, oy, oz, dx, dy, dz, p, radius = HIT_R) {
 
 // ---------------------------------------------------------------- character look (cosmetic only)
 export const LOOK_PARTS = {
-  helm: ['Visor helm', 'Hood', 'Horned', 'Crest', 'Faceplate', 'Bare head'],
-  shoulder: ['None', 'Pauldrons', 'Spikes', 'Mantle'],
-  back: ['None', 'Jetpack', 'Cape', 'Cables', 'Fins'],
-  mat: ['Alloy', 'Brushed steel', 'Carbon weave', 'Hex plating', 'Camo', 'Molten'],
+  helm: ['Visor helm', 'Hood', 'Horned', 'Crest', 'Faceplate', 'Bare head', 'Crown', 'Skull mask'],
+  shoulder: ['None', 'Pauldrons', 'Spikes', 'Mantle', 'Orbs', 'Crystals'],
+  back: ['None', 'Jetpack', 'Cape', 'Cables', 'Fins', 'Halo', 'Wings'],
+  mat: ['Alloy', 'Brushed steel', 'Carbon weave', 'Hex plating', 'Camo', 'Molten', 'Gilded', 'Void'],
+  fx: ['Burst', 'Embers', 'Frost shatter', 'Lightning', 'Confetti', 'Ghost rise', 'Gold coins', 'Void collapse'], // what everyone sees when YOU get a kill
 };
 export const LOOK_PALETTES = {
   c1: ['#2b2f3a', '#8c939f', '#e8e6df', '#b3282d', '#d9822b', '#d6b24a', '#3f8f5a', '#2d6fd6', '#6a3fc2', '#c95a9a', '#1b1b1f', '#55616b'],
@@ -254,7 +260,7 @@ export const LOOK_PALETTES = {
   glow: ['#35e0ff', '#7dff6a', '#ff8a1f', '#ff3b5c', '#c27bff', '#ffe14a', '#ffffff', '#4a8bff'],
 };
 const HEX = /^#[0-9a-f]{6}$/i;
-export const DEFAULT_LOOK = { model: 'striker', helm: 0, shoulder: 1, back: 1, mat: 0, c1: '#2b2f3a', c2: '#14161c', glow: '#35e0ff' };
+export const DEFAULT_LOOK = { model: 'striker', helm: 0, shoulder: 1, back: 1, mat: 0, fx: 0, c1: '#8c939f', c2: '#3a3f4a', glow: '#35e0ff' };
 const intIn = (v, n, d) => (Number.isInteger(v) && v >= 0 && v < n ? v : d);
 /** Any input -> a complete, valid look. */
 export function sanitizeLook(raw) {
@@ -266,18 +272,19 @@ export function sanitizeLook(raw) {
     shoulder: intIn(r.shoulder, LOOK_PARTS.shoulder.length, D.shoulder),
     back: intIn(r.back, LOOK_PARTS.back.length, D.back),
     mat: intIn(r.mat, LOOK_PARTS.mat.length, D.mat),
+    fx: intIn(r.fx, LOOK_PARTS.fx.length, D.fx),
     c1: typeof r.c1 === 'string' && HEX.test(r.c1) ? r.c1.toLowerCase() : D.c1,
     c2: typeof r.c2 === 'string' && HEX.test(r.c2) ? r.c2.toLowerCase() : D.c2,
     glow: typeof r.glow === 'string' && HEX.test(r.glow) ? r.glow.toLowerCase() : D.glow,
   };
 }
-/** Compact string sent in every snapshot: "helm,shoulder,back,mat,c1,c2,glow" (hex without #). */
-export const encodeLook = (l) => `${l.helm},${l.shoulder},${l.back},${l.mat},${l.c1.slice(1)},${l.c2.slice(1)},${l.glow.slice(1)}`;
+/** Compact string sent in every snapshot: "helm,shoulder,back,mat,c1,c2,glow,fx" (hex without #). */
+export const encodeLook = (l) => `${l.helm},${l.shoulder},${l.back},${l.mat},${l.c1.slice(1)},${l.c2.slice(1)},${l.glow.slice(1)},${l.fx}`;
 export function decodeLook(model, str) {
   const p = String(str || '').split(',');
   return sanitizeLook({
     model, helm: Number(p[0]), shoulder: Number(p[1]), back: Number(p[2]), mat: Number(p[3]),
-    c1: `#${p[4] || ''}`, c2: `#${p[5] || ''}`, glow: `#${p[6] || ''}`,
+    c1: `#${p[4] || ''}`, c2: `#${p[5] || ''}`, glow: `#${p[6] || ''}`, fx: Number(p[7]),
   });
 }
 export function randomLook(rnd = Math.random) {
@@ -285,7 +292,63 @@ export function randomLook(rnd = Math.random) {
   return sanitizeLook({
     model: pick(Object.keys(MODELS)),
     helm: Math.floor(rnd() * LOOK_PARTS.helm.length), shoulder: Math.floor(rnd() * LOOK_PARTS.shoulder.length),
-    back: Math.floor(rnd() * LOOK_PARTS.back.length), mat: Math.floor(rnd() * LOOK_PARTS.mat.length),
+    back: Math.floor(rnd() * LOOK_PARTS.back.length), mat: Math.floor(rnd() * LOOK_PARTS.mat.length), fx: Math.floor(rnd() * LOOK_PARTS.fx.length),
     c1: pick(LOOK_PALETTES.c1), c2: pick(LOOK_PALETTES.c2), glow: pick(LOOK_PALETTES.glow),
   });
+}
+
+// ---------------------------------------------------------------- progression (XP, levels, unlockable looks)
+export const XP_PER_KILL = 5, XP_MATCH = 40, XP_WIN = 60, MAX_LEVEL = 30;
+/** Level needed for each option of a look part (index = option). Level 1 options are free for everybody, guests included. */
+export const LOOK_UNLOCK = {
+  helm: [1, 1, 4, 8, 12, 1, 18, 22],
+  shoulder: [1, 1, 5, 9, 15, 24],
+  back: [1, 1, 3, 7, 11, 16, 27],
+  mat: [1, 1, 4, 7, 10, 14, 20, 26],
+  fx: [1, 3, 6, 9, 12, 16, 20, 25],
+};
+/** Level for an XP total: 60 xp -> 2, 240 -> 3, 540 -> 4 ... */
+export const levelFor = (xp) => Math.min(MAX_LEVEL, 1 + Math.floor(Math.sqrt(Math.max(0, xp || 0) / 60)));
+export const xpForLevel = (lv) => (lv <= 1 ? 0 : (lv - 1) * (lv - 1) * 60);
+/** Swap any option the player has not unlocked yet for the default one. */
+export function clampLook(look, level) {
+  const l = sanitizeLook(look);
+  for (const k of Object.keys(LOOK_UNLOCK)) if (LOOK_UNLOCK[k][l[k]] > level) l[k] = DEFAULT_LOOK[k];
+  return l;
+}
+/** Names of the options that unlock exactly when reaching `level`. */
+export function unlocksAt(level) {
+  const out = [];
+  for (const k of Object.keys(LOOK_UNLOCK)) LOOK_UNLOCK[k].forEach((req, i) => { if (req === level) out.push(LOOK_PARTS[k][i]); });
+  return out;
+}
+
+// ---------------------------------------------------------------- daily challenges
+// Three challenges per day (same for everybody), reset at midnight US Central (about 05:00 UTC).
+export const DAILY_POOL = [
+  { id: 'kills', stat: 'kills', text: 'Get {n} kills', goals: [8, 14, 22] },
+  { id: 'heads', stat: 'heads', text: 'Land {n} headshots', goals: [3, 6, 10] },
+  { id: 'wins', stat: 'wins', text: 'Win {n} match{s} with other players', goals: [1, 2, 3] },
+  { id: 'played', stat: 'played', text: 'Finish {n} matches with other players', goals: [2, 3, 5] },
+  { id: 'casts', stat: 'casts', text: 'Use skills {n} times', goals: [12, 24, 40] },
+  { id: 'damage', stat: 'damage', text: 'Deal {n} damage to players', goals: [1200, 2400, 4000] },
+];
+export const DAILY_XP = [40, 70, 110]; // reward by difficulty tier
+export const DAILY_STATS = DAILY_POOL.map((d) => d.stat);
+/** Calendar day key that rolls over at midnight US Central (UTC-5). */
+export const dayKey = (now = Date.now()) => new Date(now - 5 * 3600 * 1000).toISOString().slice(0, 10);
+export const msUntilDailyReset = (now = Date.now()) => 24 * 3600 * 1000 - ((now - 5 * 3600 * 1000) % (24 * 3600 * 1000));
+/** The day's three challenges: one easy, one medium, one hard, each a different type. */
+export function dailyFor(key) {
+  let h = 2166136261;
+  for (const ch of String(key)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  const rnd = () => { h = (Math.imul(h ^ (h >>> 15), 2246822507) + 0x9e3779b9) >>> 0; return (h >>> 8) / 16777216; };
+  const pool = [...DAILY_POOL];
+  const out = [];
+  for (let tier = 0; tier < 3; tier++) {
+    const d = pool.splice(Math.floor(rnd() * pool.length), 1)[0];
+    const goal = d.goals[tier];
+    out.push({ id: d.id, stat: d.stat, goal, tier, xp: DAILY_XP[tier], text: d.text.replace('{n}', goal).replace('{s}', goal === 1 ? '' : 'es') });
+  }
+  return out;
 }

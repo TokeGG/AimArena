@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aim Arena admin</title>
+<style>
+  body { font:14px system-ui,sans-serif; background:#14100a; color:#eadfc5; margin:0; padding:20px; }
+  h1,h2 { font-family:Georgia,serif; color:#e2b84a; letter-spacing:.08em; margin:.2em 0 .5em; }
+  input,select,button { background:#1f1810; color:#eadfc5; border:1px solid #5a4614; border-radius:6px; padding:6px 10px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:#e2b84a; }
+  table { border-collapse:collapse; width:100%; margin:8px 0 22px; } th,td { text-align:left; padding:5px 8px; border-bottom:1px solid #2c2210; vertical-align:top; }
+  th { color:#9a8a60; font-weight:600; } .sev-kick { color:#ff6a5a; } .sev-flag { color:#ffc24a; } .k-report { color:#6fc3ff; } .k-ban { color:#ff6a5a; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; } small { color:#9a8a60; } code { background:#241b0e; padding:1px 5px; border-radius:4px; }
+</style></head>
+<body>
+<h1>AIM ARENA ADMIN</h1>
+<div class="row"><input id="key" type="password" placeholder="Admin key" size="28"><button id="go">Load</button><span id="status"></span></div>
+<small>Needs the ADMIN_KEY environment variable set on the server (12+ characters). Addresses appear only as short hashes.</small>
+
+<h2>Online now</h2><table id="online"></table>
+<h2>Flags and reports</h2><table id="log"></table>
+<h2>Bans</h2><table id="bans"></table>
+<h2>Ban someone</h2>
+<div class="row">
+  <select id="btype"><option value="user">Account name</option><option value="ip">IP hash</option></select>
+  <input id="bid" placeholder="name or ip hash">
+  <select id="bhours"><option value="1">1 hour</option><option value="24">1 day</option><option value="168">1 week</option><option value="0">Permanent</option></select>
+  <input id="breason" placeholder="reason" size="30"><button id="bgo">Ban</button>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const KEY = 'aim-admin-key';
+$('key').value = sessionStorage.getItem(KEY) || '';
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'x-admin-key': $('key').value, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  return r.json();
+}
+function banBtn(type, id, label) { return `<button data-t="${type}" data-id="${esc(id)}" class="quick">${label}</button>`; }
+async function load() {
+  const d = await api('/api/admin/log');
+  if (!d.ok) { $('status').textContent = d.error || 'Failed'; return; }
+  sessionStorage.setItem(KEY, $('key').value);
+  $('status').textContent = `loaded ${new Date().toLocaleTimeString()}`;
+  $('online').innerHTML = '<tr><th>Name</th><th>Account</th><th>IP hash</th><th>Room</th><th></th></tr>' + d.online.map((o) => `<tr><td>${esc(o.name)}</td><td>${esc(o.uid || 'guest')}</td><td><code>${esc(o.ip)}</code></td><td>${o.room} (${esc(o.mode)})</td><td>${o.uid ? banBtn('user', o.uid, 'Ban account') : ''} ${banBtn('ip', o.ip, 'Ban IP')}</td></tr>`).join('');
+  $('log').innerHTML = '<tr><th>When</th><th>Type</th><th>Who</th><th>IP hash</th><th>Detail</th></tr>' + d.log.map((e) => `<tr><td>${new Date(e.t).toLocaleString()}</td><td class="k-${esc(e.kind)} sev-${esc(e.sev || '')}">${esc(e.kind)}${e.flag ? ' / ' + esc(e.flag) : ''}${e.reason ? ' / ' + esc(e.reason) : ''}${e.sev ? ' (' + esc(e.sev) + ')' : ''}</td><td>${esc(e.who)}${e.by ? '<br><small>by ' + esc(e.by) + '</small>' : ''}</td><td><code>${esc(e.ip || '')}</code></td><td>${esc(e.detail || '')}</td></tr>`).join('');
+  $('bans').innerHTML = '<tr><th>Type</th><th>Id</th><th>Until</th><th>Reason</th><th></th></tr>' + d.bans.map((b) => `<tr><td>${esc(b.type)}</td><td>${esc(b.id)}</td><td>${b.until ? new Date(b.until).toLocaleString() : 'permanent'}</td><td>${esc(b.reason)}</td><td><button data-un="${esc(b.type)}|${esc(b.id)}">Unban</button></td></tr>`).join('');
+}
+document.addEventListener('click', async (e) => {
+  const q = e.target.closest('.quick');
+  if (q) { $('btype').value = q.dataset.t; $('bid').value = q.dataset.id; $('breason').focus(); return; }
+  const un = e.target.closest('[data-un]');
+  if (un) { const [t, id] = un.dataset.un.split('|'); await api('/api/admin/unban', { type: t, id }); load(); }
+});
+$('go').onclick = load;
+$('bgo').onclick = async () => {
+  const r = await api('/api/admin/ban', { type: $('btype').value, id: $('bid').value.trim(), hours: Number($('bhours').value), reason: $('breason').value });
+  $('status').textContent = r.ok ? 'banned' : (r.error || 'failed');
+  load();
+};
+if ($('key').value) load();
+</script>
+</body></html>

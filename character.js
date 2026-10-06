@@ -10,7 +10,7 @@ const PI = Math.PI;
 let DETAIL = 1;
 export function setCharacterDetail(v) { DETAIL = Math.max(0.4, Math.min(1, Number(v) || 1)); }
 const sg = (n, min = 4) => Math.max(min, Math.round(n * DETAIL));
-const HELMS = 6, SHOULDERS = 4, BACKS = 5, MATS = 6;
+const HELMS = 8, SHOULDERS = 6, BACKS = 7, MATS = 8;
 const HEXRE = /^#[0-9a-f]{6}$/i;
 const MODEL_NAMES = ['striker', 'vanguard', 'phantom', 'warden'];
 
@@ -175,6 +175,39 @@ function drawTextures(look) {
       }
     }
     repeat = [2, 2];
+  } else if (look.mat === 6) { // Gilded: polished gold over your primary colour
+    const gold = [226, 184, 72];
+    const base0 = mixRgb(c1, gold, 0.8);
+    const g = ctx.createLinearGradient(0, 0, S, S);
+    g.addColorStop(0, css(mixRgb(base0, white, 0.25)));
+    g.addColorStop(0.5, css(mixRgb(base0, black, 0.15)));
+    g.addColorStop(1, css(mixRgb(base0, white, 0.18)));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < 6; i++) { // wide diagonal sheen bands
+      const x = rng() * S;
+      ctx.fillStyle = css(white, 0.08 + rng() * 0.1);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 14, 0); ctx.lineTo(x + 14 - S * 0.4, S); ctx.lineTo(x - S * 0.4, S); ctx.fill();
+    }
+    ctx.strokeStyle = css(mixRgb(base0, black, 0.5), 0.7); ctx.lineWidth = 1.2;
+    for (let i = 0; i <= S; i += 32) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, S); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(S, i); ctx.stroke(); }
+    for (let i = 0; i < 300; i++) { ctx.fillStyle = css(rng() < 0.5 ? white : black, 0.03 + rng() * 0.06); ctx.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1); }
+    repeat = [2, 2];
+  } else if (look.mat === 7) { // Void: dark nebula with glowing stars
+    ctx.fillStyle = css(mixRgb(c1, black, 0.82)); ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < 9; i++) {
+      const x = rng() * S, y = rng() * S, r = 22 + rng() * 34;
+      const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, css(i % 2 ? c2 : gl, 0.32)); gr.addColorStop(1, css(black, 0));
+      ctx.fillStyle = gr; ctx.fillRect(0, 0, S, S);
+    }
+    emi = mk();
+    if (emi) { emi.ctx.fillStyle = '#000'; emi.ctx.fillRect(0, 0, S, S); }
+    for (let i = 0; i < 60; i++) {
+      const x = Math.floor(rng() * S), y = Math.floor(rng() * S), big = rng() < 0.2;
+      ctx.fillStyle = css(white, 0.9); ctx.fillRect(x, y, big ? 2 : 1, big ? 2 : 1);
+      if (emi) { emi.ctx.fillStyle = css(mixRgb(gl, white, 0.5), 1); emi.ctx.fillRect(x, y, big ? 2 : 1, big ? 2 : 1); }
+    }
+    repeat = [2, 2];
   } else { // Molten: dark rock plates with glowing cracks
     const rock = mixRgb(c1, black, 0.55);
     ctx.fillStyle = css(rock);
@@ -245,7 +278,7 @@ function drawTextures(look) {
 
 function getTextures(look) {
   if (typeof document === 'undefined') return null;
-  const key = `${look.mat}|${look.c1}|${look.c2}|${look.mat === 5 ? look.glow : ''}`;
+  const key = `${look.mat}|${look.c1}|${look.c2}|${look.mat === 5 || look.mat === 7 ? look.glow : ''}`;
   if (texCache.has(key)) return texCache.get(key);
   let res = null;
   try { res = drawTextures(look); } catch (e) { res = null; }
@@ -517,6 +550,24 @@ function buildHelm(K, L, st) {
       seg('suit', [0.08, -0.06, -0.075], [0.07, -0.125, -0.03], 0.01, 0.01, { m: true, n: 5 });
       break;
     }
+    case 6: { // Crown
+      shell();
+      visor();
+      torus('glow', [0, 0.115, 0.005], 0.105, 0.011, { rs: 5, ts: 18, r: [PI / 2, 0, 0] });
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * PI * 2, x = Math.cos(a) * 0.105, z = Math.sin(a) * 0.105 + 0.005;
+        cone('glow', [x, 0.115, z], [x * 2, 1.2, (z - 0.005) * 2], 0.02, i % 2 ? 0.07 : 0.1, { n: 5 });
+      }
+      break;
+    }
+    case 7: { // Skull mask
+      shell();
+      blob('trim', [0, -0.005, -0.1], [0.098, 0.1, 0.05], { w: 10, h: 7 });
+      blob('glow', [0.04, 0.02, -0.147], [0.026, 0.03, 0.01], { m: true, w: 7, h: 5 });
+      blob('armor', [0, -0.03, -0.152], [0.012, 0.02, 0.008], { w: 5, h: 4 });
+      for (let i = -2; i <= 2; i++) blob('armor', [i * 0.02, -0.092, -0.135], [0.007, 0.018, 0.008], { w: 5, h: 4 });
+      break;
+    }
     default: { // Bare head
       const skin = 'skin';
       blob(skin, [0, 0, 0], [0.105, 0.13, 0.12], { w: 14, h: 9 });
@@ -545,6 +596,15 @@ function buildShoulders(K, L, st) {
         K.cone('trim', base, [Math.sin(t) * 0.5, Math.cos(t), zs[i] * 4], 0.022 * k, lens[i] * k, { m: true, n: 6 });
       }
     }
+  } else if (L.shoulder === 4) { // floating orbs
+    K.blob('glow', [sx + 0.03, 1.62, 0], [0.042 * k, 0.042 * k, 0.042 * k], { m: true, w: 8, h: 6 });
+    K.torus('trim', [sx + 0.03, 1.62, 0], 0.07 * k, 0.006 * k, { m: true, rs: 4, ts: 14, r: [PI / 2, 0, 0.3] });
+    K.blob('armor', [sx + 0.02, 1.41, 0], [0.1 * k, 0.055 * k, 0.1 * k], { m: true, w: 10, h: 6, r: [0, 0, -0.3] });
+  } else if (L.shoulder === 5) { // crystal cluster
+    K.blob('armor', [sx + 0.02, 1.41, 0], [0.1 * k, 0.055 * k, 0.1 * k], { m: true, w: 10, h: 6, r: [0, 0, -0.3] });
+    K.cone('glow', [sx + 0.02, 1.43, 0], [0.25, 1, 0], 0.032 * k, 0.24 * k, { m: true, n: 5 });
+    K.cone('glow', [sx + 0.05, 1.42, -0.035], [0.55, 1, -0.3], 0.024 * k, 0.16 * k, { m: true, n: 5 });
+    K.cone('glow', [sx + 0.0, 1.42, 0.04], [-0.15, 1, 0.4], 0.022 * k, 0.14 * k, { m: true, n: 5 });
   } else if (L.shoulder === 3) {
     const f = sx / 0.235;
     const prof = [[0.295 * f, 1.33], [0.24 * f, 1.385], [0.18 * f, 1.43], [0.13, 1.465], [0.09, 1.49]];
@@ -592,6 +652,20 @@ function buildBack(K, L, st) {
       K.seg('glow', [0.065, 1.3, B + 0.04], [0.065 + d[0] * 0.28, 1.3 + d[1] * 0.28, B + 0.04 + d[2] * 0.28], 0.005, 0.003, { m: true, n: 5 });
       break;
     }
+    case 5: { // Halo
+      K.torus('glow', [0, 1.62, B + 0.12], 0.17, 0.011, { rs: 5, ts: 28, r: [0.15, 0, 0] });
+      K.seg('trim', [0, 1.42, B + 0.03], [0, 1.55, B + 0.1], 0.01, 0.008, { n: 5 });
+      break;
+    }
+    case 6: { // Wings
+      K.blob('trim', [0.05, 1.3, B + 0.03], [0.04, 0.05, 0.03], { m: true, w: 8, h: 5 });
+      const ws = [[[0.85, 0.5, 0.45], 0.62], [[0.95, 0.15, 0.35], 0.55], [[0.8, -0.2, 0.4], 0.45]];
+      for (const [d, len] of ws) {
+        K.cone('armor', [0.06, 1.3, B + 0.03], d, 0.05, len, { m: true, n: 4, flat: 0.2 });
+        K.seg('glow', [0.065, 1.3, B + 0.035], [0.065 + d[0] * len * 0.9, 1.3 + d[1] * len * 0.9, B + 0.035 + d[2] * len * 0.9], 0.005, 0.003, { m: true, n: 5 });
+      }
+      break;
+    }
     default: break;
   }
   void sx;
@@ -606,11 +680,13 @@ function makeMaterials(L, teamColor, textures) {
     { metalness: 0.5, roughness: 0.45 },
     { metalness: 0.05, roughness: 0.8 },
     { metalness: 0.2, roughness: 0.7 },
+    { metalness: 0.95, roughness: 0.28 },
+    { metalness: 0.35, roughness: 0.5 },
   ];
   const mp = MAT_PARAMS[L.mat];
   const armorParams = { color: textures ? 0xffffff : L.c1, metalness: mp.metalness, roughness: mp.roughness };
   if (textures) armorParams.map = textures.map;
-  if (L.mat === 5 && textures && textures.emissive) {
+  if ((L.mat === 5 || L.mat === 7) && textures && textures.emissive) {
     armorParams.emissive = 0xffffff;
     armorParams.emissiveMap = textures.emissive;
     armorParams.emissiveIntensity = 1;

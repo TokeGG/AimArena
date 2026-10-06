@@ -20,7 +20,7 @@ let MARBLE, MARBLE_DARK, SAND, SAND_DARK, GOLD_MAT;
 let THEME = null;
 let STYLE = 'marble';
 let texList = []; // textures of the current arena (disposed with it, anisotropy set by setQuality)
-const STYLE_BY_MAP = { olympus: 'marble', foundry: 'forge', frostpeak: 'ice', labyrinth: 'brick', necropolis: 'crypt' };
+const STYLE_BY_MAP = { olympus: 'marble', foundry: 'forge', frostpeak: 'ice', labyrinth: 'brick', necropolis: 'crypt', range: 'marble' };
 function tex(canvas, repeat = true, srgb = true) {
   const t = new THREE.CanvasTexture(canvas);
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
@@ -290,9 +290,25 @@ function buildWallMesh(scene, w) {
 }
 
 // ------------------------------------------------------------------ world
+/** Same theme, but with lighter stone, a neutral light colour and brighter lights so textures actually read. */
+function brighten(t) {
+  const WHITE = 0xffffff;
+  const lightCss = (c, a) => css(mix(parseInt(c.slice(1), 16), WHITE, a));
+  return {
+    ...t,
+    haze: mix(t.haze, WHITE, 0.12),
+    marble: mix(t.marble, WHITE, 0.42), marbleDark: mix(t.marbleDark, WHITE, 0.4),
+    sand: mix(t.sand, WHITE, 0.32), sandDark: mix(t.sandDark, WHITE, 0.3),
+    floor: lightCss(t.floor, 0.3),
+    ground: mix(t.ground, WHITE, 0.2),
+    hemi: [mix(t.hemi[0], WHITE, 0.5), mix(t.hemi[1], WHITE, 0.3), t.hemi[2] * 2.1],
+    moon: [mix(t.moon[0], WHITE, 0.35), t.moon[1] * 1.9],
+  };
+}
+
 export function buildWorld(parent, mapId = DEFAULT_MAP) {
   const map = MAPS[mapId] || MAPS[DEFAULT_MAP];
-  const T0 = map.theme;
+  const T0 = brighten(map.theme);
   const ARENA = map.size; // half-extent of THIS map
   const bk = Math.max(1, ARENA / 30); // scale factor for lights, fog and shadows on big maps
   applyTheme(T0, mapId);
@@ -305,7 +321,7 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
   parent.add(scene);
   batchScene = scene;
   parent.background = new THREE.Color(T0.haze);
-  parent.fog = new THREE.Fog(T0.haze, 45 * bk, 170 * bk);
+  parent.fog = new THREE.Fog(T0.haze, 70 * bk, 230 * bk);
 
   // sky dome follows the camera
   const sky = new THREE.Mesh(
@@ -376,10 +392,13 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
     box(scene, w, H, d, x, H / 2, z, MARBLE_DARK);
     box(scene, w + 0.3, 0.4, d + 0.3, x, H + 0.2, z, GOLD_MAT);
     box(scene, w + 0.1, 0.25, d + 0.1, x, H - 1.2, z, GOLD_MAT);
+    box(scene, w + 0.5, 0.6, d + 0.5, x, 0.3, z, SAND_DARK); // plinth along the foot of the wall
   }
   for (let i = -ARENA + 3; i <= ARENA - 3; i += 6) {
     for (const [px, pz] of [[i, -ARENA + 0.45], [i, ARENA - 0.45], [-ARENA + 0.45, i], [ARENA - 0.45, i]]) {
-      box(scene, 0.9, H - 0.5, 0.9, px, (H - 0.5) / 2 + 0.25, pz, MARBLE);
+      box(scene, 0.9, H - 1.7, 0.9, px, (H - 1.7) / 2 + 0.6, pz, MARBLE);
+      box(scene, 1.3, 0.6, 1.3, px, 0.3, pz, SAND);        // base block
+      box(scene, 1.25, 0.45, 1.25, px, H - 1.35, pz, SAND); // capital
     }
   }
   flushBatches(scene);

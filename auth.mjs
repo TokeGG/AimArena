@@ -5,6 +5,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../store.js';
+import { dayKey } from '../sim.js';
 import { createAuth, rankFor, eloDelta, makeLimiter, publicProfile, START_RATING } from '../auth.js';
 
 // ---- pure helpers ----
@@ -24,6 +25,55 @@ for (const [r, name] of [[0, 'Bronze'], [999, 'Bronze'], [1000, 'Silver'], [1199
   assert.equal(lim('b'), true);
   await new Promise((r) => setTimeout(r, 70));
   assert.equal(lim('a'), true);
+}
+
+
+// ---- stats + leaderboard
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aim-lb-'));
+  const st1 = createStore({ DATA_DIR: dir });
+  const auth = createAuth(st1);
+  for (const n of ['Ann', 'Bob', 'Cy_']) assert.equal((await auth.signup(n, 'secret12')).ok, true);
+  await auth.addStats('Ann', { kills: 10, deaths: 4, xp: 100, played: true, won: true });
+  await auth.addStats('Ann', { kills: 2, deaths: 1, xp: 20, played: true, won: false });
+  await auth.addStats('Bob', { kills: 30, deaths: 9, xp: 300, played: true, won: false });
+  await auth.addStats('Cy_', { kills: 0, deaths: 3, xp: 40, played: true, won: false });
+  const u = await auth.getUser('Ann');
+  assert.deepEqual([u.kills, u.deaths, u.mwins, u.mplayed, u.xp], [12, 5, 1, 2, 120]);
+  assert.ok(!('hash' in u));
+  const byKills = await auth.leaderboard('kills');
+  assert.deepEqual(byKills.map((r) => [r.username, r.value]), [['Bob', 30], ['Ann', 12]]);
+  await st1.flush();
+  const lb2 = createAuth(createStore({ DATA_DIR: dir }));
+  await lb2.signup('Dee', 'secret12'); // fresh instance: the index must have been persisted
+  await lb2.addStats('Dee', { kills: 1, deaths: 0, xp: 5, played: true, won: true });
+  const byWins = await lb2.leaderboard('wins');
+  assert.deepEqual(byWins.map((r) => r.username).sort(), ['Ann', 'Dee']);
+  assert.equal(byWins.every((r) => r.value === 1), true);
+  // daily challenges: progress accumulates, completion pays XP once
+  const { dailyFor, dayKey } = await import('../sim.js');
+  const ch = dailyFor(dayKey());
+  assert.equal(ch.length, 3); assert.equal(new Set(ch.map((c) => c.id)).size, 3, 'three different challenge types');
+  assert.deepEqual(dailyFor('2026-10-05'), dailyFor('2026-10-05'), 'same day -> same challenges');
+  assert.notDeepEqual(dailyFor('2026-10-05').map((c) => c.id + c.goal), dailyFor('2026-10-06').map((c) => c.id + c.goal).concat('x'));
+  const first = ch[0];
+  const prog = Object.fromEntries(ch.map((c) => [c.stat, 0]));
+  const xp0 = (await auth.getUser('Cy_')).xp;
+  prog[first.stat] = first.goal - 1;
+  let r = await auth.addStats('Cy_', { kills: 0, deaths: 0, xp: 0, daily: prog });
+  assert.deepEqual(r.newDaily, []); assert.equal(r.daily.prog[first.stat], first.goal - 1);
+  r = await auth.addStats('Cy_', { kills: 0, deaths: 0, xp: 0, daily: { [first.stat]: 5 } });
+  assert.deepEqual(r.newDaily, [first.id]); assert.equal(r.xp, xp0 + first.xp); assert.deepEqual(r.daily.done, [first.id]);
+  r = await auth.addStats('Cy_', { kills: 0, deaths: 0, xp: 0, daily: { [first.stat]: 50 } });
+  assert.deepEqual(r.newDaily, [], 'a challenge pays out once'); assert.equal(r.xp, xp0 + first.xp);
+  // rivalry tallies accumulate per opponent and are capped
+  await auth.addStats('Cy_', { kills: 0, deaths: 0, xp: 0, rivals: { ann: { n: 'Ann', k: 2, d: 1 }, 'bad key!': { n: 'x', k: 9, d: 9 } } });
+  r = await auth.addStats('Cy_', { kills: 0, deaths: 0, xp: 0, rivals: { ann: { n: 'Ann', k: 1, d: 0 } } });
+  assert.deepEqual(r.rivals, { ann: { n: 'Ann', k: 3, d: 1 } }, 'tallies add up; malformed keys are dropped');
+  const many = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`opp${i + 100}`, { n: `Opp${i}`, k: i % 5, d: 1 }]));
+  r = await auth.addStats('Cy_', { kills: 0, deaths: 0, xp: 0, rivals: many });
+  assert.equal(Object.keys(r.rivals).length, 40, 'only the 40 busiest rivalries are kept');
+  console.log('stats + leaderboard: ok');
 }
 
 // ---- shared auth scenario, run against any store ----
@@ -80,7 +130,8 @@ async function scenario(store) {
 
   // profile
   assert.deepEqual(publicProfile(u), {
-    username: 'Alice_1', rating: 1000, wins: 20, losses: 0, matches: 20, rank: 'Silver',
+    username: 'Alice_1', rating: 1000, wins: 20, losses: 0, matches: 20, rank: 'Silver', kills: 0, deaths: 0, mwins: 0, mplayed: 0, xp: 0,
+    daily: { day: dayKey(), prog: {}, done: [] }, rivals: {},
   });
   // a login still works after updates (hash preserved)
   assert.equal((await auth.login('alice_1', 'hunter22')).ok, true);

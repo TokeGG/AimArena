@@ -70,9 +70,9 @@ Every action (including Fire and the three skills) can use a keyboard key, any m
 
 ## Characters and customization
 
-Everyone has the same stats: 100 health, speed 7.0, normal heal. Shots to kill: 5 body / 3 head. Nothing about your character changes how you play.
+Everyone has the same stats: 150 health, speed 7.0, normal heal. Shots to kill: 7 body / 4 head. Nothing about your character changes how you play.
 
-Menu > Customize changes how you look: body style (Striker, Vanguard, Phantom, Warden), helmet (6), shoulders (4), back piece (5), material (6), plus primary, secondary and glow colours (presets or any colour). Randomize and Reset are there too. Your look is saved in your browser and everyone in the match sees it. Team colour still shows on a glowing band so you can tell sides apart. Fast graphics lowers character detail.
+Menu > Customize changes how you look: body style (Striker, Vanguard, Phantom, Warden), helmet (8), shoulders (6), back piece (7), material (8), kill effect (8), plus primary, secondary and glow colours (presets or any colour). Randomize and Reset are there too. Your look is saved in your browser and everyone in the match sees it. Team colour still shows on a glowing band so you can tell sides apart. Fast graphics lowers character detail.
 
 Maps use generated textures (marble, forged metal, ice, brick, crypt stone) with per-theme details such as snow caps, ember strips and moss. Enemy name plates show only while that enemy is visible; allies always show.
 
@@ -84,7 +84,7 @@ Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
 |---|---|---|
 | Dash | 5s | Burst of speed in your move direction |
 | Shield | 14s | 40% less damage for 2.5s |
-| Heal | 18s | Restore 35 HP |
+| Heal | 18s | Restore 50 HP |
 | Shockwave | 10s | Aimed shot: pushes the first enemy hit straight back. No damage |
 | Pushback | 10s | Blast around you: shoves every enemy within 7m away from you. No damage |
 | Blink | 9s | Teleport 9m forward where you look (stops at walls) |
@@ -95,8 +95,57 @@ Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
 | Fire Pool | 14s | Ignite the ground where you aim (3m wide, 5s): burns enemies standing in it |
 | Frost Nova | 12s | 12 damage and 3s slow to enemies within 5m |
 | Barbed Rounds | 14s | 6s: rifle hits cause bleed (worse while the target moves) |
+| Slow Trap | 12s | Drop a mine where you stand (max 2, lasts 45s). First enemy to step on it is slowed 3s |
+| Mark | 14s | Tag the enemy you aim at: your team sees them through walls for 5s. No cooldown on a miss |
+| Gravity Well | 16s | Where you aim: pulls everything within 4.5m toward the centre for 2.5s, slowing enemies |
+| Polymorph | 18s | Aimed shot: turns the enemy into a sheep for 2s. They can move but cannot shoot or cast |
+| Overcharge | 14s | Your next rifle shot (6s to use it) does double damage |
 
-Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots. Lava on Foundry burns anyone touching the floor in it.
+Rifle: 22 body / 45 headshot damage, 150 HP, 0.18s between shots. Lava on Foundry burns anyone touching the floor in it.
+
+## Safety and anti-cheat
+
+The server decides everything (movement, hits, ammo, cooldowns), so a modified client cannot give itself damage, ammo or speed. On top of that:
+
+| Protection | What it does |
+|---|---|
+| Input throttle | A client may only use about 60 inputs per second (small burst allowed). Sending them faster to run faster does nothing. |
+| Rewind limit | A shot can only be rewound as far as the player's measured ping explains (+170 ms), so faking lag to hit "old" positions is capped. |
+| Wall-hack protection | Enemies you and your teammates cannot see are sent WITHOUT their position (only the spot you last saw them). Marked players, whoever just hit you, and anyone within 3.5 m are still sent. Enemy Slow Traps are hidden until you are within 7 m. |
+| Spectator delay | Spectators see the match 8 s late, so a friend watching cannot call out positions. `SPEC_DELAY=0` turns it off. |
+| Flags | Logged for you to review: input flooding, firing during the cooldown, view snapping right before hits, runs of near-perfect headshots, 3+ different players reporting someone. Input flooding and firing during the cooldown also disconnect the client if extreme. Aim flags never ban automatically. |
+| Reports | Pause menu or end screen > Report. 3 reports per player per 10 minutes. |
+| Names | Profanity, leetspeak (`sh1t`), spaced letters and impersonation (`Admin`, bot names, existing accounts) are blocked. Extend with `BLOCKED_WORDS=word1,word2`. |
+| Connection limits | Same-site origins only, 10 sockets per address, 8 KB message cap, message flood kick. |
+| Browser protection | Content-Security-Policy, no framing, no MIME sniffing. |
+| Privacy | IP addresses are never stored: logs and bans use a 12-character salted hash. |
+
+### Moderating (your admin page)
+
+1. On Render add the environment variable `ADMIN_KEY` (any 12+ character secret). Optional: `TRUST_PROXY_HOPS=1`.
+2. Open `https://YOUR-SITE.onrender.com/admin.html`, type the key, press Load.
+3. You get: who is online (with account and address hash), the log of flags and reports, and bans. Click Ban account or Ban IP on a row, pick a duration, Ban. The player is disconnected immediately. Unban from the Bans table.
+
+Without `ADMIN_KEY` the admin API does not exist. The log and bans are saved in the same storage as accounts, so they only survive restarts with Upstash connected.
+
+## Rivals and sounds
+
+- Rivalry: every kill between two signed-in human players on opposite teams adds to a lifetime head-to-head. From the second encounter a toast shows `you 7 - 4 them` (with NEMESIS when you are 2+ behind). Profile lists your top rivals. Bots and guests do not count.
+- Every kind of hit has its own sound: normal, headshot, overcharged (deep thump), bound (chain), into a shield (clang), barbed (squelch), frost nova (chime). Skills also have their own cues (trap snap, mark ping, gravity drone, polymorph baa, overcharge power-up).
+
+## Match end, kill effects, daily challenges
+
+- After every match: PLAY AGAIN (everyone pressing it starts the next match in 2s; otherwise the normal 15s timer runs) and LEAVE.
+- Kill effects: what everybody sees where YOU score a kill. Burst (free), Embers Lv3, Frost shatter Lv6, Lightning Lv9, Confetti Lv12, Ghost rise Lv16, Gold coins Lv20, Void collapse Lv25. Clicking one in the customizer previews it.
+- New parts: Crown helm Lv18, Skull mask Lv22, Orbs Lv15, Crystals Lv24, Halo Lv16, Wings Lv27, Gilded material Lv20, Void material Lv26.
+- Daily challenges (menu button): 3 per day (easy / medium / hard) paying 40 / 70 / 110 XP. Same for everyone, reset at midnight US Central. Kills and damage on bots do not count, and matches only count with 2+ real players. Needs a signed-in account.
+
+## Levels, unlocks, leaderboard, practice range
+
+- XP: +5 per enemy kill, +40 per finished match, +60 for a win. Level = 1 + floor(sqrt(XP / 60)), max 30.
+- Customizer parts unlock by level (locked ones show a lock and the level needed). Guests are level 1 and earn nothing.
+- Leaderboard (menu button): Wins, Kills, Rating tabs, top 25. Wins = match wins in any mode. Profile shows level, XP, kills, deaths, K/D, wins.
+- Practice range: private room with 5 moving target dummies, infinite ammo, no timer. Panel shows shots, hits, accuracy, headshots. Backspace resets. Nothing counts toward stats.
 
 ## Layout (all files sit in one flat folder)
 
@@ -120,4 +169,5 @@ Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots. Lava on Foundr
 - Lag compensation rewinds enemies up to 0.4s for shots. Very high ping (over about 400ms) is still unfair.
 - Players do not collide with each other.
 - To add a map, add an entry to `maps.js` (keep walls point-mirrored so teams stay fair; `npm test` checks the rules).
-- No leaderboard yet.
+- Stats and the leaderboard only persist if Upstash Redis is connected on Render. Without it they reset on every restart.
+- Kills on bots give no kill stats or XP (matches and wins still do). The practice range counts nothing.

@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs';
 import { Room } from '../game.js';
 import { stepPlayer, DT, ARENA, WALLS, useMap } from '../sim.js';
 
@@ -61,7 +62,7 @@ useMap('olympus');
 
 // ------------------------------------------------------------ 3. real server + websocket
 const port = 3900 + Math.floor(Math.random() * 90);
-const srv = spawn('node', ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), DATA_DIR: path.join(os.tmpdir(), 'aim-test-' + port) }, stdio: ['ignore', 'pipe', 'inherit'] });
+const srv = spawn('node', ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'aim-test-')) }, stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((res, rej) => {
   srv.stdout.on('data', (d) => { if (String(d).includes('running')) res(); });
   srv.on('exit', (c) => rej(new Error('server exited ' + c)));
@@ -79,7 +80,7 @@ try {
   const msgs = [];
   ws.onmessage = (e) => msgs.push(JSON.parse(e.data));
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
-  ws.send(JSON.stringify({ t: 'join', name: 'Tester', mode: 3, loadout: ['bind', 'firepool', 'barbed'], model: 'phantom' }));
+  ws.send(JSON.stringify({ t: 'join', name: 'Tester', mode: 3, loadout: ['bind', 'firepool', 'barbed'], look: { model: 'phantom', helm: 1, shoulder: 0, back: 2, mat: 1, c1: '#ff0000', c2: '#00ff00', glow: '#0000ff' } }));
   ws.send(JSON.stringify({ t: 'ping', ts: 42 }));
   await new Promise((r) => setTimeout(r, 300));
   const welcome = msgs.find((m) => m.t === 'welcome');
@@ -111,7 +112,10 @@ try {
   assert.equal(end.p.length, 6, 'expected 3v3 = 6 players');
   const meP = end.p.find((p) => !p.b);
   assert.equal(meP.md, 'phantom');
-  assert.equal(meP.mh, 70);
+  assert.equal(meP.mh, 150, 'every character has the same health');
+  assert.equal(meP.lk, '1,0,1,1,ff0000,00ff00,0000ff,0', 'look not carried to the snapshot (back 2 needs level 3 so guests get the default: 1)');
+  assert.ok(end.p.filter((p) => p.b).every((p) => typeof p.lk === 'string' && p.lk.split(',').length === 8), 'bots need looks too');
+  assert.deepEqual(welcome.look.c1, '#ff0000');
   assert.ok(Array.isArray(end.zn), 'snapshot missing zones');
   assert.equal(end.me.cd.length, 3);
   assert.equal(end.p.filter((p) => !p.b).length, 1, 'expected exactly one human');

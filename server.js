@@ -7,11 +7,15 @@ import { Lobby } from './lobby.js';
 import { attachWebSocket } from './ws-lite.js';
 import { createStore } from './store.js';
 import { createAuth, makeLimiter, eloDelta, publicProfile, rankFor } from './auth.js';
-import { DT, SPELLS, MODELS, sanitizeLook, MAPS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT, LOADOUT_BUDGET, loadoutCost, VERSION } from './sim.js';
+import { nameAllowed, guestName, ipHash, clientIp, createModeration } from './safety.js';
+import crypto from 'node:crypto';
+import { DT, SPELLS, MODELS, sanitizeLook, MAPS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT, LOADOUT_BUDGET, loadoutCost, clampLook, levelFor, unlocksAt, XP_PER_KILL, XP_MATCH, XP_WIN, VERSION, dailyFor, dayKey } from './sim.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 const SNAPSHOT_EVERY = 2; // ticks (60 Hz sim -> 30 Hz snapshots)
+const SPEC_DELAY = Math.max(0, Number(process.env.SPEC_DELAY ?? 8)); // seconds spectators lag behind the live match
+const SPEC_DELAY_SNAPS = Math.round(SPEC_DELAY * 30);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -22,7 +26,7 @@ const MIME = {
 };
 
 // Only these files are ever served (everything lives in one folder, no subfolders).
-const STATIC_FILES = new Set(['index.html', 'main.js', 'world.js', 'sim.js', 'maps.js', 'textures.js', 'character.js']);
+const STATIC_FILES = new Set(['admin.html', 'index.html', 'main.js', 'world.js', 'sim.js', 'maps.js', 'textures.js', 'character.js']);
 
 function resolveFile(urlPath) {
   let p;
@@ -37,7 +41,10 @@ const store = createStore();
 const auth = createAuth(store);
 const authLimit = makeLimiter(12, 60_000); // per IP per minute
 
-const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+const mod = createModeration(store);
+const ADMIN_KEY = String(process.env.ADMIN_KEY || '');
+const adminLimit = makeLimiter(8, 60_000);
+const sameKey = (a, b) => { const x = crypto.createHash('sha256').update(String(a)).digest(), y = crypto.createHash('sha256').update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
 
 function readJson(req, limit = 4096) {
   return new Promise((resolve, reject) => {
@@ -49,21 +56,59 @@ function readJson(req, limit = 4096) {
   });
 }
 
+// Browser-side protections: no framing, no MIME sniffing, and scripts only from this site plus the three.js CDN.
+const SEC_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
+};
+
 function sendJson(res, code, obj) {
-  res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...SEC_HEADERS });
   res.end(JSON.stringify(obj));
 }
 
 const bearer = (req) => String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
 
+/** Owner-only moderation API. Disabled unless the ADMIN_KEY env var (12+ characters) is set. */
+async function handleAdmin(req, res, route) {
+  if (ADMIN_KEY.length < 12) return sendJson(res, 404, { ok: false, error: 'Not found' });
+  if (!adminLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many attempts' });
+  if (!sameKey(req.headers['x-admin-key'] || '', ADMIN_KEY)) return sendJson(res, 401, { ok: false, error: 'Wrong key' });
+  if (route === '/api/admin/log' && req.method === 'GET') {
+    const online = [...sockets].filter((w) => w.player).map((w) => ({ name: w.player.name, uid: w.player.uid, ip: w.ipH, room: w.room.rid, mode: w.room.mode }));
+    return sendJson(res, 200, { ok: true, log: mod.list(200), bans: mod.bans(), online });
+  }
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
+  const body = await readJson(req);
+  const type = body.type === 'ip' ? 'ip' : 'user';
+  const id = String(body.id || '').toLowerCase().slice(0, 40);
+  if (route === '/api/admin/ban') {
+    const hours = Math.max(0, Math.min(24 * 365, Number(body.hours) || 0));
+    if (!mod.ban(type, id, hours, body.reason)) return sendJson(res, 400, { ok: false, error: 'Bad ban' });
+    mod.add({ kind: 'ban', who: id, detail: `${type} ban, ${hours ? `${hours}h` : 'permanent'}: ${String(body.reason || '').slice(0, 80)}` });
+    for (const w of sockets) if ((type === 'user' && w.player && w.player.uid === id) || (type === 'ip' && w.ipH === id)) { send(w, { t: 'error', msg: 'You have been removed from the game.' }); setTimeout(() => w.terminate(), 50); }
+    return sendJson(res, 200, { ok: true });
+  }
+  if (route === '/api/admin/unban') return sendJson(res, 200, { ok: mod.unban(type, id) });
+  return sendJson(res, 404, { ok: false, error: 'Not found' });
+}
+
 async function handleApi(req, res, route) {
   try {
     if (route === '/api/games' && req.method === 'GET') {
-      const games = rooms.filter((r) => r.humans().length > 0).map((r) => ({
+      const games = rooms.filter((r) => r.humans().length > 0 && !r.range).map((r) => ({
         id: r.rid, mode: r.mode, map: r.mapId, mapName: MAPS[r.mapId].name, ranked: !!r.ranked, ph: r.phase, rd: r.round, sc: r.scores,
         humans: r.humans().map((p) => p.name), size: r.players.length, watching: r.specs.size,
       })).sort((a, b) => b.humans.length - a.humans.length);
       return sendJson(res, 200, { ok: true, games });
+    }
+    if (route === '/api/leaderboard' && req.method === 'GET') {
+      const by = new URL(req.url, 'http://x').searchParams.get('by');
+      const rows = await auth.leaderboard(by === 'kills' || by === 'rating' ? by : 'wins', 25);
+      return sendJson(res, 200, { ok: true, by: by === 'kills' || by === 'rating' ? by : 'wins', rows, persistent: store.kind === 'upstash' });
     }
     if (route === '/api/status') {
       return sendJson(res, 200, { version: VERSION, persistent: store.kind === 'upstash', storage: store.kind, online: onlineCount() });
@@ -72,6 +117,7 @@ async function handleApi(req, res, route) {
       const u = await auth.userFromToken(bearer(req));
       return u ? sendJson(res, 200, { ok: true, profile: publicProfile(u) }) : sendJson(res, 401, { ok: false, error: 'Not signed in' });
     }
+    if (route.startsWith('/api/admin/')) return handleAdmin(req, res, route);
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
     if (!authLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many attempts, wait a minute' });
     if (route === '/api/logout') {
@@ -80,6 +126,7 @@ async function handleApi(req, res, route) {
     }
     if (route === '/api/signup' || route === '/api/login') {
       const body = await readJson(req);
+      if (route === '/api/signup' && !nameAllowed(body.username)) return sendJson(res, 400, { ok: false, error: 'That username is not allowed' });
       const r = await (route === '/api/signup' ? auth.signup(body.username, body.password) : auth.login(body.username, body.password));
       if (!r.ok) return sendJson(res, 400, r);
       return sendJson(res, 200, { ok: true, token: r.token, profile: publicProfile(r.user) });
@@ -106,6 +153,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
+      ...SEC_HEADERS,
     });
     res.end(data);
   });
@@ -148,8 +196,59 @@ function onForfeit(room, p) { // left a ranked match before it ended: counts as 
 }
 
 // ------------------------------------------------------------------ lobby + sockets
+/** Send a human's pending kills/deaths (and, at match end, the match itself) to their account. */
+function flushStats(room, p, matchEnded, winner) {
+  if (!p.uid || p.isBot || room.noStats) return;
+  const kills = p.sKills, deaths = p.sDeaths;
+  const rivals = p.rvDelta && Object.keys(p.rvDelta).length ? p.rvDelta : null;
+  p.rvDelta = {};
+  const daily = { kills, heads: p.dHeads, damage: Math.round(p.dDmg), casts: p.dCasts };
+  p.sKills = 0; p.sDeaths = 0; p.dHeads = 0; p.dDmg = 0; p.dCasts = 0;
+  const won = matchEnded && winner === p.team && winner >= 0;
+  const xp = kills * XP_PER_KILL + (matchEnded ? XP_MATCH + (won ? XP_WIN : 0) : 0);
+  if (matchEnded && room.humans().length >= 2) { daily.played = 1; if (won) daily.wins = 1; } // matches against bots only do not count
+  if (!kills && !deaths && !matchEnded && !daily.heads && !daily.damage && !daily.casts) return;
+  const before = p.xp || 0;
+  p.xp = before + xp;
+  auth.addStats(p.uid, { kills, deaths, xp, played: matchEnded, won, daily, rivals }).then((u) => {
+    if (!u) return;
+    p.xp = u.xp;
+    if (matchEnded && p.ws && p.ws.readyState === 1) {
+      const lv0 = levelFor(before), lv1 = levelFor(u.xp);
+      const unlocked = [];
+      for (let l = lv0 + 1; l <= lv1; l++) unlocked.push(...unlocksAt(l));
+      p.ws.send(JSON.stringify({ t: 'xp', gained: xp, xp: u.xp, level: lv1, up: lv1 > lv0, unlocked, kills: u.kills, mwins: u.mwins, daily: u.daily, newDaily: u.newDaily || [], dailyXp: dailyFor(dayKey()).filter((c) => (u.newDaily || []).includes(c.id)).reduce((a, c) => a + c.xp, 0) }));
+    }
+  }).catch((e) => console.error('stats update failed', e && e.message));
+}
+const onStats = (room, winner) => { for (const p of room.players) flushStats(room, p, true, winner); };
+const onLeave = (room, p) => flushStats(room, p, false, -1);
+/** Two real players killed each other: keep both sides' lifetime tally and tell them. */
+function onRivalKill(room, killer, victim) {
+  const upd = (me, opp, iKilled) => {
+    me.rivals = me.rivals || {};
+    me.rvDelta = me.rvDelta || {};
+    const key = opp.uid;
+    const r = me.rivals[key] || { n: opp.name, k: 0, d: 0 };
+    const dd = me.rvDelta[key] || { n: opp.name, k: 0, d: 0 };
+    if (iKilled) { r.k++; dd.k++; } else { r.d++; dd.d++; }
+    r.n = opp.name; dd.n = opp.name;
+    me.rivals[key] = r; me.rvDelta[key] = dd;
+    if (me.ws && me.ws.readyState === 1) me.ws.send(JSON.stringify({ t: 'riv', key, n: opp.name, k: r.k, d: r.d, won: iKilled ? 1 : 0 }));
+  };
+  upd(killer, victim, true);
+  upd(victim, killer, false);
+}
+
+/** Called by rooms when a client does something a real client never does. */
+function onFlag(room, p, kind, detail, sev) {
+  const ws = p.ws;
+  mod.add({ kind: 'flag', sev, flag: kind, who: p.uid || p.name, guest: !p.uid, ip: ws && ws.ipH, room: room.rid, mode: room.mode, detail });
+  console.warn(`[anti-cheat] ${sev} ${kind} ${p.uid || p.name}: ${detail}`);
+  if (sev === 'kick' && ws) { send(ws, { t: 'error', msg: 'Disconnected: unusual network behaviour.' }); setTimeout(() => ws.terminate(), 50); }
+}
 let nextRid = 1;
-const lobby = new Lobby((mode, mapId, ranked) => { const r = new Room(mode, mapId, { ranked, onMatchEnd, onForfeit }); r.rid = nextRid++; return r; });
+const lobby = new Lobby((mode, mapId, ranked) => { const r = new Room(mode, mapId, { ranked, onMatchEnd, onForfeit, onStats, onLeave, onFlag, onRivalKill }); r.rid = nextRid++; return r; });
 const rooms = lobby.rooms;
 const sockets = new Set();
 const onlineCount = () => [...sockets].filter((w) => w.player).length;
@@ -174,11 +273,12 @@ const send = (ws, obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)
 
 async function handleJoin(ws, m) {
   if (ws.player || ws.ticket || ws.specRoom) return;
-  const ffa = m.mode === 'ffa';
+  const isRange = m.mode === 'range';
+  const ffa = m.mode === 'ffa' || isRange;
   const mode = ffa ? 'ffa' : m.mode === 3 ? 3 : 2;
   // team modes use team maps, free-for-all uses the big deathmatch map(s)
   const allowed = ffa ? FFA_MAP_IDS : TEAM_MAP_IDS;
-  const map = typeof m.map === 'string' && allowed.includes(m.map) ? m.map : allowed[0];
+  const map = isRange ? 'range' : typeof m.map === 'string' && allowed.includes(m.map) ? m.map : allowed[0];
   const ranked = !ffa && m.queue === 'ranked'; // no ranked free-for-all
   const team = !ffa && (m.team === 0 || m.team === 1) ? m.team : -1;
   let user = null;
@@ -186,11 +286,18 @@ async function handleJoin(ws, m) {
     try { user = await auth.userFromToken(m.token); } catch { user = null; }
   }
   if (ranked && !user) { send(ws, { t: 'error', msg: 'Sign in to play ranked.' }); return; }
+  if (user && mod.isBanned('user', user.username)) { send(ws, { t: 'error', msg: 'This account is suspended.' }); return; }
   if (ws.readyState !== 1 || ws.player || ws.ticket) return;
 
-  const name = user ? user.username : cleanName(m.name);
+  let name = user ? user.username : guestName(m.name);
+  if (!user) { // a guest may not pose as a registered player
+    let taken = null;
+    try { taken = await auth.getUser(name); } catch { taken = null; }
+    if (taken) name = guestName('');
+  }
   const loadout = cleanLoadout(m.loadout);
-  const look = sanitizeLook({ ...(m.look && typeof m.look === 'object' ? m.look : {}), model: cleanModel(m.look && m.look.model ? m.look.model : m.model) });
+  const level = user ? levelFor(user.xp || 0) : 1;
+  const look = clampLook({ ...(m.look && typeof m.look === 'object' ? m.look : {}), model: cleanModel(m.look && m.look.model ? m.look.model : m.model) }, level);
   const model = look.model;
   const rating = user ? user.rating : 1000;
 
@@ -198,22 +305,49 @@ async function handleJoin(ws, m) {
     mode, map, ranked, team, rating, since: 0,
     place(room) {
       const p = room.addHuman(ws, name, loadout, model, { team, look, uid: user ? user.username : null, rating });
+      if (p) { p.xp = user ? user.xp || 0 : 0; p.rivals = user && user.rivals ? JSON.parse(JSON.stringify(user.rivals)) : {}; p.rvDelta = {}; }
       if (!p) return false;
       ws.player = p; ws.room = room; ws.ticket = null;
       send(ws, {
         t: 'welcome', id: p.id, team: p.team, mode, map, ranked, loadout: p.loadout, model: p.model, look: p.look, name,
-        rating: user ? rating : null, rank: user ? rankFor(rating) : null,
+        rating: user ? rating : null, rank: user ? rankFor(rating) : null, range: !!room.range, level, xp: user ? user.xp || 0 : 0,
       });
       return true;
     },
   };
+  if (isRange) { // a private room for this player only (never matched with anyone else, not listed, no stats)
+    const room = new Room('ffa', 'range', { range: true, onFlag });
+    room.rid = nextRid++;
+    lobby.rooms.push(room);
+    ticket.place(room);
+    return;
+  }
   if (!lobby.enter(ticket)) {
     ws.ticket = ticket;
     send(ws, { t: 'queue', waited: 0, searching: lobby.queueInfo(ticket).searching });
   }
 }
 
-attachWebSocket(server, (ws) => {
+const ipConns = new Map();
+const MAX_CONN_PER_IP = Number(process.env.MAX_CONN_PER_IP) || 10;
+/** Handshake gate: same-site origins only, banned IPs out, and a cap on sockets per address. */
+function verifyUpgrade(req) {
+  const origin = req.headers.origin;
+  if (origin) {
+    let host = '';
+    try { host = new URL(origin).host; } catch { return false; }
+    const ok = [req.headers.host, ...String(process.env.ALLOWED_ORIGINS || '').split(',').map((x) => x.trim()).filter(Boolean)];
+    if (!ok.some((a) => a === host || a === origin)) return false;
+  }
+  const ip = ipHash(clientIp(req));
+  if (mod.isBanned('ip', ip)) return false;
+  return (ipConns.get(ip) || 0) < MAX_CONN_PER_IP;
+}
+
+attachWebSocket(server, (ws, req) => {
+  ws.ipH = ipHash(clientIp(req));
+  ipConns.set(ws.ipH, (ipConns.get(ws.ipH) || 0) + 1);
+  ws.win = { t: 0, n: 0, strikes: 0 };
   ws.player = null;
   ws.room = null;
   ws.ticket = null;
@@ -221,6 +355,12 @@ attachWebSocket(server, (ws) => {
   sockets.add(ws);
 
   ws.on('message', (raw) => {
+    const nowMs = Date.now();
+    if (nowMs - ws.win.t > 1000) { ws.win.t = nowMs; ws.win.n = 0; }
+    if (++ws.win.n > 150) { // a real client sends about 65 messages a second
+      if (ws.win.n === 151 && ++ws.win.strikes >= 5) { mod.add({ kind: 'flag', sev: 'kick', flag: 'spam', who: ws.player ? ws.player.uid || ws.player.name : 'unknown', ip: ws.ipH, detail: 'message flood' }); ws.terminate(); }
+      return;
+    }
     let m;
     try { m = JSON.parse(raw); } catch { return; }
     if (!m || typeof m !== 'object') return;
@@ -229,9 +369,17 @@ attachWebSocket(server, (ws) => {
       if (ws.player) ws.room.queueInput(ws.player, m);
     } else if (m.t === 'ping') {
       ws.send(JSON.stringify({ t: 'pong', ts: m.ts }));
+    } else if (m.t === 'sq') { // answer to the server's own round-trip probe (used to limit lag-compensation rewind)
+      if (ws.probe && m.n === ws.probe.n && ws.player) {
+        const rtt = performance.now() - ws.probe.t;
+        ws.player.rttMs = ws.player.rttMs == null ? rtt : ws.player.rttMs * 0.8 + rtt * 0.2;
+        ws.probe = null;
+      }
+    } else if (m.t === 'report') {
+      handleReport(ws, m);
     } else if (m.t === 'spectate') {
       if (ws.player || ws.ticket || ws.specRoom) return;
-      const room = rooms.find((r) => r.rid === m.room);
+      const room = rooms.find((r) => r.rid === m.room && !r.range);
       if (!room || room.specs.size >= 20) { send(ws, { t: 'error', msg: 'That game is no longer available.' }); return; }
       room.specs.add(ws); ws.specRoom = room;
       send(ws, { t: 'welcome', spec: true, id: -1, team: 0, mode: room.mode, map: room.mapId, ranked: !!room.ranked, loadout: [], name: 'Spectator' });
@@ -239,6 +387,8 @@ attachWebSocket(server, (ws) => {
       handleJoin(ws, m).catch((e) => console.error('join error', e && e.message));
     } else if (m.t === 'cancel') {
       if (ws.ticket) { lobby.cancel(ws.ticket); ws.ticket = null; }
+    } else if (m.t === 'rematch') {
+      if (ws.player) ws.room.setRematch(ws.player);
     } else if (m.t === 'pick') {
       if (ws.player) ws.room.setPick(ws.player, cleanModel(m.model), cleanLoadout(m.loadout));
     }
@@ -246,17 +396,41 @@ attachWebSocket(server, (ws) => {
 
   ws.on('close', () => {
     sockets.delete(ws);
+    ipConns.set(ws.ipH, Math.max(0, (ipConns.get(ws.ipH) || 1) - 1));
     if (ws.ticket) { lobby.cancel(ws.ticket); ws.ticket = null; }
     if (ws.specRoom) { ws.specRoom.specs.delete(ws); ws.specRoom = null; }
     if (ws.player) ws.room.removeHuman(ws.player);
     ws.player = null;
   });
-});
+}, verifyUpgrade);
+
+/** A player reports another human. Three different reporters inside ten minutes raise a flag for review. */
+function handleReport(ws, m) {
+  if (!ws.player || !ws.room) return;
+  const now = Date.now();
+  ws.reports = (ws.reports || []).filter((t) => now - t < 600_000);
+  if (ws.reports.length >= 3) { send(ws, { t: 'notice', msg: 'You have sent a lot of reports. Try again in a few minutes.' }); return; }
+  const target = ws.room.players.find((x) => x.id === (m.id | 0) && !x.isBot && x !== ws.player);
+  if (!target) return;
+  const reason = ['cheating', 'name', 'other'].includes(m.reason) ? m.reason : 'other';
+  const by = ws.player.uid || `${ws.player.name}#${ws.ipH}`;
+  ws.reports.push(now);
+  mod.add({ kind: 'report', reason, who: target.uid || target.name, by, room: ws.room.rid, ip: target.ws && target.ws.ipH });
+  target.repBy = target.repBy || new Map();
+  target.repBy.set(by, now);
+  for (const [k, t] of target.repBy) if (now - t > 600_000) target.repBy.delete(k);
+  if (target.repBy.size >= 3 && !target.repFlagged) {
+    target.repFlagged = true;
+    mod.add({ kind: 'flag', sev: 'flag', flag: 'reports', who: target.uid || target.name, ip: target.ws && target.ws.ipH, room: ws.room.rid, detail: `${target.repBy.size} different players reported them` });
+  }
+  send(ws, { t: 'notice', msg: 'Report sent. Thank you.' });
+}
 
 // ------------------------------------------------------------------ main loop
 let last = performance.now();
 let acc = 0;
-let lastQueueTick = 0;
+let lastQueueTick = 0, lastProbe = 0, probeN = 0;
+let lastFlush = Date.now();
 setInterval(() => {
   const now = performance.now();
   acc += (now - last) / 1000;
@@ -271,6 +445,14 @@ setInterval(() => {
     steps++;
   }
   if (steps >= 5) acc = 0;
+  if (now - lastFlush > 60000) { // save kills/deaths of people who stay in one long match
+    lastFlush = now;
+    for (const room of rooms) for (const p of room.humans()) flushStats(room, p, false, -1);
+  }
+  if (now - lastProbe > 2000) {
+    lastProbe = now;
+    for (const ws of sockets) if (ws.player && ws.readyState === 1) { ws.probe = { n: ++probeN, t: now }; ws.send(JSON.stringify({ t: 'sp', n: probeN })); }
+  }
   if (now - lastQueueTick > 500) {
     lastQueueTick = now;
     lobby.tick();
@@ -285,11 +467,16 @@ function broadcast(room) {
   if (humans.length || room.specs.size) {
     const snap = room.snapshot();
     for (const p of humans) {
-      if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify({ ...snap, me: room.meFor(p) }));
+      if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify({ ...room.viewSnapshot(snap, p), me: room.meFor(p) }));
     }
-    if (room.specs.size) {
-      const txt = JSON.stringify(snap);
-      for (const w of room.specs) if (w.readyState === 1) w.send(txt);
+    if (!room.range) { // spectators see the match a few seconds late, so nobody can relay enemy positions to a player
+      const buf = room.specBuf || (room.specBuf = []);
+      buf.push(JSON.stringify(snap));
+      if (buf.length > SPEC_DELAY_SNAPS + 2) buf.shift();
+      if (room.specs.size && buf.length > SPEC_DELAY_SNAPS) {
+        const txt = buf[buf.length - 1 - SPEC_DELAY_SNAPS];
+        for (const w of room.specs) if (w.readyState === 1) w.send(txt);
+      }
     }
   }
   room.events = [];

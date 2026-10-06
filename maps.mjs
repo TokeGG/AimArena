@@ -76,7 +76,7 @@ function longestLine(map) {
   return best;
 }
 
-assert.deepEqual(MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth', 'necropolis']);
+assert.deepEqual(MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth', 'necropolis', 'range']);
 assert.equal(DEFAULT_MAP, 'olympus');
 assert.deepEqual(TEAM_MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth']);
 assert.deepEqual(FFA_MAP_IDS, ['necropolis']);
@@ -118,12 +118,12 @@ for (const id of MAP_IDS) {
   }
   // spawns
   if (map.ffa) {
-    assert.ok(Array.isArray(map.ffaSpawns) && map.ffaSpawns.length >= 12, `${id} needs >= 12 ffaSpawns`);
+    assert.ok(Array.isArray(map.ffaSpawns) && map.ffaSpawns.length >= (map.range ? 6 : 12), `${id} needs enough ffaSpawns`);
     assert.ok(!map.spawns, `${id} ffa map must not define team spawns`);
     for (const s of map.ffaSpawns) assert.ok(Number.isFinite(s.x) && Number.isFinite(s.z), `${id} ffa spawn`);
     for (let i = 0; i < map.ffaSpawns.length; i++) for (let j = i + 1; j < map.ffaSpawns.length; j++) {
       const a = map.ffaSpawns[i], b = map.ffaSpawns[j];
-      assert.ok(Math.hypot(a.x - b.x, a.z - b.z) >= 12, `${id} ffa spawns ${i},${j} closer than 12 m`);
+      assert.ok(Math.hypot(a.x - b.x, a.z - b.z) >= (map.range ? 6 : 12), `${id} ffa spawns ${i},${j} too close`);
     }
   } else {
     assert.equal(map.spawns.length, 3, `${id} needs 3 spawns`);

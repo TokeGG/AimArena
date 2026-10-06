@@ -8,6 +8,7 @@ import {
 export const WIN_ROUNDS = 3;
 export const ROUND_TIME = 90;
 export const MATCH_END_TIME = 15; // seconds players get to re-pick champion + skills after a match
+export const RANGE_PLAYERS = 6; // you + 5 dummies
 export const FFA_PLAYERS = 8;   // free-for-all: humans + bots
 export const FFA_KILLS = 20;     // first to this many kills wins
 export const FFA_TIME = 300;     // or the best score after 5 minutes
@@ -28,6 +29,14 @@ const NOVA_RADIUS = 5, NOVA_DMG = 12, NOVA_SLOW = 3;
 const BLINK_DIST = 9, GRAPPLE_RANGE = 28, GRAPPLE_SPEED = 30;
 const SMOKE_RADIUS = 3.6, SMOKE_TIME = 7, SMOKE_RANGE = 24;
 const DECOY_TIME = 6, DECOY_SPEED = 5;
+const TRAP_R = 1.5, TRAP_TIME = 45, TRAP_ARM = 0.8, TRAP_SLOW = 3, TRAP_MAX = 2;
+const MARK_TIME = 5, MARK_RANGE = 60, MARK_RADIUS = 1.3;
+const WELL_R = 4.5, WELL_TIME = 2.5, WELL_PULL = 4.5, WELL_RANGE = 26;
+const OVER_MULT = 2;
+const CREDIT_MAX = 12, CREDIT_REFILL = 1.05; // inputs a client may process: ~60/s plus a small burst (stops speed hacks that send inputs faster than real time)
+const VIS_GRACE = 0.6, NEAR_REVEAL = 3.5, TRAP_REVEAL = 7, KILLER_REVEAL = 3; // visibility culling (anti wall-hack)
+const REMATCH_GO = 2; // seconds left on the post-match timer once everyone voted to play again
+const POLY_TIME = 2, POLY_RANGE = 40;
 let nextDecoyId = 1000000;
 
 const SPELL_IDS = Object.keys(SPELLS);
@@ -82,7 +91,7 @@ function applyModel(p, key) {
 
 function clearStatuses(p) {
   p.rootT = 0; p.slowT = 0; p.burnT = 0; p.bleedT = 0; p.burnSrc = null; p.bleedSrc = null;
-  p.bleedBuffT = 0; p.bindBuffT = 0; p.invulnT = 0;
+  p.bleedBuffT = 0; p.bindBuffT = 0; p.invulnT = 0; p.markT = 0; p.markTeam = -9; p.overT = 0; p.polyT = 0;
 }
 
 function makePlayer(team, slot, isBot, name) {
@@ -90,8 +99,9 @@ function makePlayer(team, slot, isBot, name) {
     id: nextId++, team, slot, isBot, ws: null, name,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0,
     yaw: 0, pitch: 0, alive: true,
-    model: DEFAULT_MODEL, look: sanitizeLook(null), maxHp: 100, speed: 7, healMult: 1, hp: 100,
-    loadout: randomLoadout(), cd: [0, 0, 0], fireCd: 0, ammo: AMMO_START, shieldT: 0,
+    model: DEFAULT_MODEL, look: sanitizeLook(null), maxHp: 150, speed: 7, healMult: 1, hp: 150,
+    loadout: randomLoadout(), cd: [0, 0, 0], fireCd: 0, sKills: 0, sDeaths: 0, dHeads: 0, dDmg: 0, dCasts: 0,
+    credit: CREDIT_MAX, rttMs: null, strikes: {}, flagT: {}, kicked: false, dyawHist: [], aimLog: [], spawnTick: 0, ammo: AMMO_START, shieldT: 0,
     lastSeq: 0, lastQueued: 0, queue: [], lastInput: NEUTRAL(),
     kills: 0, deaths: 0, lastHurt: -99, respawnT: 0, invulnT: 0,
     hist: [], // recent positions {n,x,y,z} for lag compensation
@@ -108,9 +118,15 @@ export class Room {
     this.mapId = MAPS[mapId] ? mapId : DEFAULT_MAP;
     this.ranked = !!opts.ranked;
     this.onMatchEnd = opts.onMatchEnd || null; // (room, winnerTeam) when a ranked match ends
+    this.onLeave = opts.onLeave || null;       // (room, player) just before a human is replaced by a bot
+    this.onStats = opts.onStats || null;       // (room, winnerTeam) at the end of every match (account stats / XP)
+    this.noStats = !!opts.noStats;             // practice range: nothing counts
+    this.onRivalKill = opts.onRivalKill || null; // (room, killer, victim) human vs human, different teams
+    this.onFlag = opts.onFlag || null;         // (room, player, kind, detail, 'flag'|'kick') suspicious client behaviour
     this.onForfeit = opts.onForfeit || null;   // (room, player) when a human leaves a ranked match early
     this.ffa = mode === 'ffa';
-    this.size = this.ffa ? FFA_PLAYERS : mode;
+    this.range = !!opts.range; // solo practice: harmless moving dummies, infinite ammo, never ends
+    this.size = this.range ? RANGE_PLAYERS : this.ffa ? FFA_PLAYERS : mode;
     this.players = [];
     this.zones = [];
     this.decoys = [];
@@ -125,6 +141,7 @@ export class Room {
     this.tick = 0;
     this.time = 0;
     this.emptyT = 0;
+    if (this.range) this.noStats = true;
     this.specs = new Set(); // spectator sockets (watch only, no player)
     if (this.ffa) {
       // free-for-all: every player is their own team (team === slot), so "enemy" simply means "someone else"
@@ -136,6 +153,7 @@ export class Room {
         }
       }
     }
+    if (this.range) { this.phaseT = 2; this.roundT = 1e9; this.players.forEach((p, i) => { p.dummy = true; p.name = `Target ${i + 1}`; }); }
     this.resetRound();
   }
 
@@ -154,6 +172,7 @@ export class Room {
       const bot = this.players.find((p) => p.isBot && (this.ffa || p.team === team));
       if (bot) {
         bot.isBot = false;
+        bot.dummy = false;
         bot.ws = ws;
         bot.name = name;
         bot.loadout = loadout;
@@ -167,6 +186,7 @@ export class Room {
         bot.kills = 0;
         bot.deaths = 0;
         bot.uid = opts.uid || null;
+        bot.credit = CREDIT_MAX; bot.rttMs = null; bot.strikes = {}; bot.flagT = {}; bot.kicked = false; bot.aimLog = [];
         bot.rating = opts.rating || 1000;
         bot.startRating = bot.rating;
         this.emptyT = 0;
@@ -192,7 +212,15 @@ export class Room {
     return true;
   }
 
+  /** PLAY AGAIN vote during the post-match window. */
+  setRematch(p) {
+    if (this.phase !== 'matchEnd' || p.isBot) return false;
+    p.rematch = true;
+    return true;
+  }
+
   removeHuman(p) {
+    if (this.onLeave) this.onLeave(this, p);
     if (this.ranked && this.onForfeit && p.uid && this.phase !== 'matchEnd' && this.winner < 0) this.onForfeit(this, p);
     p.uid = null;
     p.isBot = true;
@@ -214,7 +242,46 @@ export class Room {
       jump: !!m.jump, crouch: !!m.crouch, shoot: !!m.shoot, q: !!m.q, e: !!m.e, r: !!m.r,
       vt: Number.isFinite(+m.vt) ? +m.vt : 0, // server tick the shooter was looking at
     });
-    if (p.queue.length > 20) p.queue.shift();
+    if (p.queue.length > 20) { p.queue.shift(); this.strike(p, 'flood', 10, 150, 600, 'sending inputs faster than real time'); }
+  }
+
+  /** Count a suspicious event; flag it (and eventually ask to kick) when it keeps happening inside a time window. */
+  strike(p, kind, windowSec, flagAt, kickAt, detail) {
+    if (p.isBot || this.range) return;
+    const arr = p.strikes[kind] || (p.strikes[kind] = []);
+    const t = this.time;
+    arr.push(t);
+    while (arr.length && arr[0] < t - windowSec) arr.shift();
+    if (arr.length >= flagAt && t - (p.flagT[kind] === undefined ? -999 : p.flagT[kind]) > 30) {
+      p.flagT[kind] = t;
+      if (this.onFlag) this.onFlag(this, p, kind, detail, 'flag');
+    }
+    if (arr.length >= kickAt && !p.kicked) {
+      p.kicked = true;
+      if (this.onFlag) this.onFlag(this, p, kind, detail, 'kick');
+    }
+  }
+
+  /** Rewind limit for a shot: what this player's measured round trip could really explain (plus a margin). */
+  clampVt(p, vt) {
+    if (!(vt > 0)) return vt;
+    const rtt = p.rttMs == null ? 150 : p.rttMs;
+    const back = Math.min(MAX_REWIND, Math.ceil(rtt * 0.06) + 10);
+    return Math.max(vt, this.tick - back);
+  }
+
+  /** Aim statistics: a long run of near-perfect headshots is logged for a human to look at (never an automatic ban). */
+  aimStat(p, hit) {
+    p.aimLog.push(hit ? (hit.head ? 2 : 1) : 0);
+    if (p.aimLog.length >= 20) {
+      const hits = p.aimLog.filter((v) => v > 0).length, heads = p.aimLog.filter((v) => v === 2).length;
+      p.aimLog.length = 0;
+      if (hits >= 19 && heads >= 14) { if (this.onFlag) this.onFlag(this, p, 'aim', `${hits}/20 hits, ${heads} headshots`, 'flag'); }
+    }
+    if (hit && this.tick - p.spawnTick > 60) {
+      const mx = Math.max(0, ...p.dyawHist);
+      if (mx > 2.2) this.strike(p, 'snap', 600, 4, 1e9, `view snapped ${mx.toFixed(1)} rad right before a hit`);
+    }
   }
 
   // -------------------------------------------------------------- rounds
@@ -230,7 +297,7 @@ export class Room {
       p.x = sp.x; p.y = 0; p.z = sp.z;
       p.vx = p.vy = p.vz = 0; p.crouch = false;
       p.dvx = p.dvz = 0; p.dashT = 0;
-      p.yaw = sp.yaw; p.pitch = 0;
+      p.yaw = sp.yaw; p.pitch = 0; p.spawnTick = this.tick; p.dyawHist.length = 0;
       p.hp = p.maxHp; p.alive = true;
       p.cd = [0, 0, 0]; p.fireCd = 0; p.ammo = AMMO_START; p.shieldT = 0;
       clearStatuses(p);
@@ -255,6 +322,7 @@ export class Room {
       this.phaseT = MATCH_END_TIME;
       this.winner = w;
       if (this.ranked && this.onMatchEnd) this.onMatchEnd(this, w);
+      if (this.onStats && !this.noStats) this.onStats(this, w);
     } else {
       this.phase = 'roundEnd';
       this.phaseT = 3.5;
@@ -272,6 +340,7 @@ export class Room {
     this.phase = 'matchEnd';
     this.phaseT = MATCH_END_TIME;
     this.events.push({ k: 'round', w: this.winner });
+    if (this.onStats && !this.noStats) this.onStats(this, this.winner);
   }
 
   /** FFA: bring a dead player back at the spawn point farthest from living enemies. */
@@ -288,10 +357,10 @@ export class Room {
     const c = pick(cands.slice(0, Math.min(3, cands.length))).f;
     p.x = c.x; p.y = 0; p.z = c.z;
     p.vx = p.vy = p.vz = 0; p.dvx = p.dvz = 0; p.dashT = 0; p.crouch = false;
-    p.yaw = Math.atan2(c.x, c.z); p.pitch = 0;
+    p.yaw = Math.atan2(c.x, c.z); p.pitch = 0; p.spawnTick = this.tick; p.dyawHist.length = 0;
     p.hp = p.maxHp; p.alive = true; p.fireCd = 0; p.ammo = AMMO_START;
     clearStatuses(p);
-    p.invulnT = SPAWN_PROTECT; p.shieldT = SPAWN_PROTECT;
+    p.invulnT = this.range ? 0 : SPAWN_PROTECT; p.shieldT = this.range ? 0 : SPAWN_PROTECT;
     p.hist = [];
     p.queue = [];
     p.ai = newAI(); p.ai.lx = p.x; p.ai.lz = p.z;
@@ -307,6 +376,10 @@ export class Room {
     const dt = DT;
 
     if (this.phase !== 'live') {
+      if (this.phase === 'matchEnd' && this.phaseT > REMATCH_GO) { // everyone pressed PLAY AGAIN: skip the rest of the wait
+        const hs = this.humans();
+        if (hs.length && hs.every((h) => h.rematch)) this.phaseT = REMATCH_GO;
+      }
       this.phaseT -= dt;
       if (this.phaseT <= 0) {
         if (this.phase === 'countdown') {
@@ -323,7 +396,7 @@ export class Room {
           this.winner = -1;
           this.lastWinner = -1;
           for (const p of this.players) {
-            p.kills = 0; p.deaths = 0;
+            p.kills = 0; p.deaths = 0; p.rematch = false;
             if (p.nextLoadout) { p.loadout = p.nextLoadout; p.nextLoadout = null; }
             if (p.isBot) { p.look = randomLook(); applyModel(p, p.look.model); p.loadout = randomLoadout(); }
             if (!p.isBot) p.startRating = p.rating; // ratings may have changed at the end of the last match
@@ -342,6 +415,9 @@ export class Room {
       p.bleedBuffT = Math.max(0, p.bleedBuffT - dt);
       p.invulnT = Math.max(0, p.invulnT - dt);
       p.bindBuffT = Math.max(0, p.bindBuffT - dt);
+      p.overT = Math.max(0, p.overT - dt);
+      p.markT = Math.max(0, p.markT - dt);
+      p.polyT = Math.max(0, p.polyT - dt);
 
       if (this.ffa && this.phase === 'live' && !p.alive) {
         p.respawnT -= dt;
@@ -357,12 +433,14 @@ export class Room {
       }
       if (p.isBot) {
         if (!p.alive) continue;
-        const inp = this.phase === 'live' ? botThink(this, p, dt) : NEUTRAL();
+        const inp = this.phase === 'live' ? (p.dummy ? dummyThink(this, p, dt) : botThink(this, p, dt)) : NEUTRAL();
         if (this.phase !== 'live') inp.yaw = p.yaw;
         this.applyInput(p, inp, dt);
       } else {
+        p.credit = Math.min(CREDIT_MAX, p.credit + CREDIT_REFILL);
         let n = 0;
-        while (p.queue.length && n < 8) {
+        while (p.queue.length && n < 8 && p.credit >= 1) {
+          p.credit -= 1;
           const inp = p.queue.shift();
           p.lastSeq = inp.seq;
           n++;
@@ -379,7 +457,7 @@ export class Room {
       if (this.ffa) {
         let top = 0;
         for (const p of this.players) top = Math.max(top, p.kills);
-        if (top >= FFA_KILLS || this.roundT <= 0) this.endFfa();
+        if (!this.range && (top >= FFA_KILLS || this.roundT <= 0)) this.endFfa();
       } else {
         const alive = [0, 0];
         const hp = [0, 0];
@@ -410,12 +488,17 @@ export class Room {
 
   applyInput(p, inp, dt) {
     p.lastInput = inp;
+    if (!p.isBot) { p.dyawHist.push(Math.abs(angDiff(inp.yaw, p.yaw))); if (p.dyawHist.length > 4) p.dyawHist.shift(); }
     stepPlayer(p, inp, dt);
     p.yaw = inp.yaw;
     p.pitch = inp.pitch;
-    if (this.phase !== 'live' || !p.alive) return;
+    if (this.phase !== 'live' || !p.alive || p.polyT > 0) return; // polymorphed: no shooting, no skills
+    if (!p.isBot) {
+      inp.vt = this.clampVt(p, inp.vt);
+      if (inp.shoot && p.fireCd > 0.35) this.strike(p, 'rapid', 10, 6, 25, 'firing while the weapon is still reloading');
+    }
     // small tolerance: semi-auto clients send one shot per click, so a packet landing a tick early must not be dropped
-    if (inp.shoot && p.fireCd <= FIRE_TOLERANCE && p.ammo > 0) this.shoot(p, inp);
+    if (inp.shoot && p.fireCd <= FIRE_TOLERANCE && (p.ammo > 0 || this.range)) this.shoot(p, inp);
     for (let s = 0; s < SLOT_COUNT; s++) {
       if (inp[SLOT_FLAG[s]] && p.cd[s] <= 0) this.cast(p, s, inp);
     }
@@ -426,6 +509,29 @@ export class Room {
     for (const z of this.zones) {
       z.t -= dt;
       if (z.t <= 0 || z.kind === 'smoke') continue;
+      if (z.kind === 'trap') {
+        if (z.arm > 0) { z.arm -= dt; continue; }
+        for (const o of this.players) {
+          if (!o.alive || o.team === z.team || o.y > 1.4 || Math.hypot(o.x - z.x, o.z - z.z) > z.r) continue;
+          o.slowT = Math.max(o.slowT, TRAP_SLOW);
+          z.t = 0;
+          this.events.push({ k: 'trapped', v: o.id, x: r2(z.x), z: r2(z.z) });
+          break;
+        }
+        continue;
+      }
+      if (z.kind === 'well') {
+        for (const o of this.players) {
+          if (!o.alive || o.y > 3) continue;
+          const wx = z.x - o.x, wz = z.z - o.z, d = Math.hypot(wx, wz);
+          if (d > z.r || d < 0.4) continue;
+          const step = Math.min(WELL_PULL * dt * (o.team === z.team ? 0.5 : 1), d - 0.3);
+          o.x += (wx / d) * step; o.z += (wz / d) * step;
+          resolveWalls(o);
+          if (o.team !== z.team) o.slowT = Math.max(o.slowT, 0.3);
+        }
+        continue;
+      }
       for (const o of this.players) {
         if (!o.alive || o.team === z.team) continue;
         if (o.y < 1.2 && Math.hypot(o.x - z.x, o.z - z.z) < z.r) this.ignite(o, z.src, BURN_LINGER);
@@ -465,7 +571,9 @@ export class Room {
   }
 
   addZone(owner, x, z, r, dur, kind) {
-    this.zones.push({ id: nextZoneId++, x, z, r, t: dur, max: dur, team: owner.team, src: owner, kind });
+    const zone = { id: nextZoneId++, x, z, r, t: dur, max: dur, team: owner.team, src: owner, kind };
+    this.zones.push(zone);
+    return zone;
   }
 
   /** Damage over time: no hit marker, but kills are credited to the source. */
@@ -480,29 +588,35 @@ export class Room {
     victim.hp = 0;
     victim.alive = false;
     victim.deaths++;
+    victim.sDeaths++;
     victim.respawnT = RESPAWN_TIME;
     if (attacker !== victim) {
       attacker.kills++;
+      if (attacker.team !== victim.team && !victim.isBot) attacker.sKills++; // bot kills are worth no stats/XP
+      if (attacker.team !== victim.team && !attacker.isBot && !victim.isBot && attacker.uid && victim.uid && this.onRivalKill && !this.noStats) this.onRivalKill(this, attacker, victim);
       if (attacker.team !== victim.team) attacker.ammo = Math.min(AMMO_MAX, attacker.ammo + AMMO_KILL); // a kill refills your ammo
     }
-    this.events.push({ k: 'kill', a: attacker.id, v: victim.id, head: head ? 1 : 0 });
+    this.events.push({ k: 'kill', a: attacker.id, v: victim.id, head: head ? 1 : 0, x: r2(victim.x), y: r2(victim.y), z: r2(victim.z) });
   }
 
   // -------------------------------------------------------------- combat
   shoot(p, inp) {
     p.fireCd = FIRE_INTERVAL;
-    p.ammo--;
+    if (!this.range) p.ammo--;
     const bindShot = p.bindBuffT > 0; // Bind: this shot roots whoever it hits (used up even on a miss)
     p.bindBuffT = 0;
+    const over = p.overT > 0; // Overcharge: this shot deals double damage (used up even on a miss)
+    p.overT = 0;
     const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
     const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
     const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, RANGE), RANGE);
     const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt);
+    if (!p.isBot) this.aimStat(p, best && !best.decoy ? best : null);
     let t = best ? best.t : tWall;
     if (!best && dy < 0) t = Math.min(t, -oy / dy); // floor
     this.events.push({
       k: 'shot', id: p.id, ox: r2(ox), oy: r2(oy), oz: r2(oz),
-      ex: r2(ox + dx * t), ey: r2(oy + dy * t), ez: r2(oz + dz * t), hit: best ? 1 : 0, bd: bindShot ? 1 : 0,
+      ex: r2(ox + dx * t), ey: r2(oy + dy * t), ez: r2(oz + dz * t), hit: best ? 1 : 0, bd: bindShot ? 1 : 0, oc: over ? 1 : 0,
     });
     if (best && best.decoy) { // the shot is wasted on a decoy; it pops
       this.decoys = this.decoys.filter((d) => d !== best.who);
@@ -514,7 +628,7 @@ export class Room {
         v.vx = 0; v.vz = 0; v.dashT = 0; v.dvx = 0; v.dvz = 0;
         this.events.push({ k: 'bound', v: v.id });
       }
-      this.damage(best.who, best.head ? HEAD_DMG : BODY_DMG, p, best.head);
+      this.damage(best.who, (best.head ? HEAD_DMG : BODY_DMG) * (over ? OVER_MULT : 1), p, best.head, over ? 'oc' : bindShot ? 'bd' : p.bleedBuffT > 0 ? 'bl' : '');
       this.onRifleHit(p, best.who);
     }
   }
@@ -561,12 +675,18 @@ export class Room {
     return h.length ? h[0] : o;
   }
 
-  damage(victim, amount, attacker, head) {
+  damage(victim, amount, attacker, head, tag) {
     if (!victim.alive || victim.invulnT > 0) return;
     if (victim.shieldT > 0) amount *= 0.6; // Shield: 40% less damage
+    if (attacker !== victim && attacker.team !== victim.team && !victim.isBot) { // daily-challenge tallies (bots are worth nothing)
+      attacker.dDmg += Math.max(0, Math.min(amount, victim.hp));
+      if (head) attacker.dHeads++;
+    }
     victim.hp -= amount;
     victim.lastHurt = this.time;
-    this.events.push({ k: 'hit', a: attacker.id, v: victim.id, dmg: Math.round(amount), head: head ? 1 : 0 });
+    if (attacker !== victim) { victim.lastAtkId = attacker.id; victim.lastAtkT = this.time; }
+    const tg = tag === 'oc' || tag === 'bd' ? tag : victim.shieldT > 0 ? 'sh' : tag; // what kind of hit it was, for the sound
+    this.events.push({ k: 'hit', a: attacker.id, v: victim.id, dmg: Math.round(amount), head: head ? 1 : 0, ...(tg ? { tg } : {}) });
     if (victim.hp <= 0) this.kill(victim, attacker, head);
   }
 
@@ -575,6 +695,7 @@ export class Room {
     const spell = SPELLS[id];
     if (!spell) return;
     p.cd[slot] = spell.cd;
+    p.dCasts++;
     const ev = { k: 'spell', id: p.id, s: id, x: r2(p.x), y: r2(p.y), z: r2(p.z) };
     const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
     const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
@@ -592,7 +713,7 @@ export class Room {
         p.shieldT = 2.5;
         break;
       case 'heal':
-        p.hp = Math.min(p.maxHp, p.hp + 35 * p.healMult);
+        p.hp = Math.min(p.maxHp, p.hp + 50 * p.healMult);
         break;
       case 'shockwave': { // aimed shot: pushes the first enemy hit straight back, no damage
         const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, SHOCK_RANGE), SHOCK_RANGE);
@@ -641,7 +762,7 @@ export class Room {
           if (o.team === p.team || !o.alive) continue;
           if (Math.hypot(o.x - p.x, o.z - p.z) > NOVA_RADIUS || Math.abs(o.y - p.y) > 3) continue;
           o.slowT = NOVA_SLOW;
-          this.damage(o, NOVA_DMG, p, false);
+          this.damage(o, NOVA_DMG, p, false, 'nv');
         }
         ev.r = NOVA_RADIUS;
         break;
@@ -679,6 +800,45 @@ export class Room {
       case 'decoy':
         this.decoys.push({ id: nextDecoyId++, x: p.x, y: p.y, z: p.z, yaw: inp.yaw, pitch: 0, t: DECOY_TIME, team: p.team, model: p.model, look: p.look, crouch: false, hist: [] });
         break;
+      case 'slowtrap': {
+        const mine = this.zones.filter((z) => z.kind === 'trap' && z.src === p);
+        while (mine.length >= TRAP_MAX) { const old = mine.shift(); old.t = 0; }
+        this.addZone(p, p.x, p.z, TRAP_R, TRAP_TIME, 'trap').arm = TRAP_ARM;
+        ev.tx = r2(p.x); ev.tz = r2(p.z); ev.r = TRAP_R;
+        break;
+      }
+      case 'mark': {
+        const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, MARK_RANGE), MARK_RANGE);
+        const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt, MARK_RADIUS);
+        if (!best) { p.cd[slot] = 1; return; } // nobody under the crosshair: no cooldown spent
+        best.who.markT = MARK_TIME; best.who.markTeam = p.team;
+        this.events.push({ k: 'marked', v: best.who.id });
+        break;
+      }
+      case 'gravity': {
+        let t = Math.min(rayWorld(ox, oy, oz, dx, dy, dz, WELL_RANGE), WELL_RANGE);
+        if (!Number.isFinite(t)) t = WELL_RANGE;
+        const px = clamp(ox + dx * t, -ARENA + 1, ARENA - 1), pz = clamp(oz + dz * t, -ARENA + 1, ARENA - 1);
+        this.addZone(p, px, pz, WELL_R, WELL_TIME, 'well');
+        ev.tx = r2(px); ev.tz = r2(pz); ev.r = WELL_R;
+        break;
+      }
+      case 'polymorph': {
+        const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, POLY_RANGE), POLY_RANGE);
+        const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt, SHOCK_RADIUS);
+        let t = best ? best.t : tWall;
+        if (!best && dy < 0) t = Math.min(t, -oy / dy);
+        ev.ox = r2(ox); ev.oy = r2(oy); ev.oz = r2(oz);
+        ev.ex = r2(ox + dx * t); ev.ey = r2(oy + dy * t); ev.ez = r2(oz + dz * t);
+        ev.hit = best ? 1 : 0;
+        if (best) {
+          const v = best.who;
+          v.polyT = POLY_TIME; v.bindBuffT = 0; v.bleedBuffT = 0; v.overT = 0;
+          this.events.push({ k: 'poly', v: v.id });
+        }
+        break;
+      }
+      case 'overcharge': p.overT = BUFF_TIME; break; // next rifle shot deals double damage
       default: break;
     }
     this.events.push(ev);
@@ -688,24 +848,80 @@ export class Room {
   snapshot() {
     return {
       t: 's', n: this.tick, ph: this.phase, pt: r2(this.phaseT), rt: Math.round(this.roundT * 10) / 10,
+      rv: this.phase === 'matchEnd' ? this.humans().filter((h) => h.rematch).length : 0, rh: this.humans().length,
       sc: this.scores, rd: this.round, lw: this.lastWinner, w: this.winner, mode: this.mode, ffa: this.ffa ? 1 : 0, kt: FFA_KILLS,
       p: this.players.map((p) => ({
         id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model, lk: encodeLook(p.look),
         x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw), pit: r3(p.pitch),
         hp: Math.ceil(p.hp), mh: p.maxHp, a: p.alive ? 1 : 0, sh: p.shieldT > 0 ? 1 : 0,
-        sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0) | (p.crouch ? 16 : 0),
-        bf: (p.bleedBuffT > 0 ? 2 : 0) | (p.bindBuffT > 0 ? 8 : 0),
+        sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0) | (p.crouch ? 16 : 0) | (p.polyT > 0 ? 32 : 0),
+        bf: (p.bleedBuffT > 0 ? 2 : 0) | (p.overT > 0 ? 4 : 0) | (p.bindBuffT > 0 ? 8 : 0),
+        mk: p.markT > 0 ? p.markTeam + 2 : 0, // team that marked this player (+2 so 0 means unmarked)
         k: p.kills, d: p.deaths,
       })),
-      zn: this.zones.map((z) => ({ id: z.id, x: r2(z.x), z: r2(z.z), r: z.r, t: r2(z.t), m: z.max, k: z.kind === 'smoke' ? 1 : 0 })),
+      zn: this.zones.map((z) => ({ id: z.id, x: r2(z.x), z: r2(z.z), r: z.r, t: r2(z.t), m: z.max, k: z.kind === 'smoke' ? 1 : z.kind === 'trap' ? 2 : z.kind === 'well' ? 3 : 0, tm: z.team })),
       dc: this.decoys.map((d) => ({ id: d.id, tm: d.team, md: d.model, lk: encodeLook(d.look), x: r3(d.x), y: r3(d.y), z: r3(d.z), yaw: r3(d.yaw), pit: 0 })),
       ev: this.events,
     };
   }
 
+  // -------------------------------------------------------------- visibility (anti wall-hack)
+  /** Can anyone on `viewer`'s side see enemy `o` (or is it close, marked or the one shooting them)? */
+  canReveal(viewer, pov, o) {
+    if (o.markT > 0 && o.markTeam === viewer.team) return true; // Mark shows them through walls
+    if (viewer.lastAtkId === o.id && this.time - viewer.lastAtkT < (viewer.alive ? KILLER_REVEAL : KILLER_REVEAL + 2)) return true; // whoever just hit you (kill-cam)
+    for (const s of pov) {
+      const dx = o.x - s.x, dz = o.z - s.z, d = Math.hypot(dx, dz);
+      if (d < NEAR_REVEAL) return true;
+      const ox = s.x, oy = s.y + eyeH(s), oz = s.z;
+      const px = -dz / (d || 1), pz = dx / (d || 1); // sideways, so a body edge sticking out from behind a corner counts
+      for (const side of [0, 0.8, -0.8]) {
+        for (const h of [1.5, 0.8]) {
+          const tx = o.x + px * side, ty = o.y + h, tz = o.z + pz * side;
+          const vx = tx - ox, vy = ty - oy, vz = tz - oz, len = Math.hypot(vx, vy, vz) || 1;
+          if (rayWalls(ox, oy, oz, vx / len, vy / len, vz / len, len) >= len - 0.05) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** The snapshot as `viewer` is allowed to know it: enemies they cannot see are sent without their position. */
+  viewSnapshot(snap, viewer) {
+    if (this.range || !viewer) return snap;
+    const mem = viewer.vis || (viewer.vis = new Map());
+    const byId = new Map(this.players.map((p) => [p.id, p]));
+    const live = this.phase === 'live';
+    let pov = [viewer];
+    if (!this.ffa) {
+      pov = this.players.filter((o) => o.team === viewer.team && o.alive);
+      if (!pov.length) pov = [viewer];
+    }
+    const out = snap.p.map((sp) => {
+      const o = byId.get(sp.id);
+      const friendly = o === viewer || (!this.ffa && o.team === viewer.team);
+      if (friendly || !live || !o.alive || this.canReveal(viewer, pov, o)) {
+        mem.set(sp.id, { x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pit: sp.pit, t: this.time });
+        return sp;
+      }
+      const m = mem.get(sp.id);
+      if (m && this.time - m.t < VIS_GRACE) return sp; // just stepped out of sight: keep showing them for a moment
+      return { ...sp, x: m ? m.x : 0, y: m ? m.y : -50, z: m ? m.z : 0, yaw: m ? m.yaw : 0, pit: 0, sf: 0, sh: 0, bf: 0, mk: 0, hid: 1 };
+    });
+    const zn = snap.zn.filter((z) => {
+      if (z.k !== 2 || z.tm === viewer.team) return true; // enemy mines stay hidden until you walk close
+      return Math.hypot(z.x - viewer.x, z.z - viewer.z) < TRAP_REVEAL;
+    });
+    const dc = snap.dc.filter((d) => {
+      if (d.tm === viewer.team && !this.ffa) return true;
+      return live ? this.canReveal(viewer, pov, { x: d.x, y: d.y, z: d.z, id: -1 }) : true;
+    });
+    return { ...snap, p: out, zn, dc };
+  }
+
   meFor(p) {
     return {
-      id: p.id, ack: p.lastSeq, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), am: p.ammo, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
+      id: p.id, ack: p.lastSeq, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), am: this.range ? 99 : p.ammo, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
       st: {
         x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, dvx: p.dvx, dvz: p.dvz, dashT: p.dashT,
         rootT: p.rootT, slowT: p.slowT,
@@ -818,6 +1034,19 @@ function navWaypoint(field, x, z, steps = 3) {
 }
 
 // ====================================================================== bot AI
+/** Practice-range targets never shoot. Each slot moves differently: stand, strafe, hop, run laps. */
+function dummyThink(room, p, dt) {
+  const inp = { seq: 0, mx: 0, mz: 0, yaw: p.yaw, pitch: 0, jump: false, shoot: false, q: false, e: false, r: false, vt: 0 };
+  const t = room.time + p.slot * 1.9;
+  switch (p.slot % 4) {
+    case 1: inp.mx = Math.sin(t * 0.9) > 0 ? 1 : -1; break;                 // strafes left / right
+    case 2: inp.mx = Math.sin(t * 1.3) > 0 ? 1 : -1; inp.jump = Math.sin(t * 2.6) > 0.92; break; // strafes and hops
+    case 3: inp.mz = 1; inp.yaw = p.yaw + 0.9 * dt; break;                  // runs in circles
+    default: break;                                                         // stands still
+  }
+  return inp;
+}
+
 function botThink(room, p, dt) {
   const ai = p.ai, skill = p.skill;
   const inp = { seq: 0, mx: 0, mz: 0, yaw: p.yaw, pitch: p.pitch, jump: false, shoot: false, q: false, e: false, r: false, vt: 0 };
@@ -924,6 +1153,11 @@ function botThink(room, p, dt) {
       case 'grapple': want = visible && dist > 16 && Math.random() < 0.008; break;
       case 'smoke': want = visible && room.time - p.lastHurt < 0.5 && Math.random() < 0.08; break;
       case 'decoy': want = visible && room.time - p.lastHurt < 1.0 && Math.random() < 0.1; break;
+      case 'slowtrap': want = Math.random() < 0.004 && !visible; break;
+      case 'mark': want = visible && aimed && dist < 45 && ai.seenT > 0.2; break;
+      case 'gravity': want = visible && dist < 24 && Math.random() < 0.02; break;
+      case 'polymorph': want = visible && aimed && dist < 30 && ai.seenT > 0.2; break;
+      case 'overcharge': want = visible && aimed && p.overT <= 0 && ai.seenT > 0.3; break;
       default: break;
     }
     if (want) inp[SLOT_FLAG[s]] = true;

@@ -341,8 +341,25 @@ const necropolis = {
   },
 };
 
-export const MAPS = { olympus, foundry, frostpeak, labyrinth, necropolis };
+// ---------------------------------------------------------------- range (size 22, solo practice)
+// A small open yard with a few cover pieces; the dummies live here. Not offered in the normal menus.
+const range = {
+  id: 'range',
+  name: 'Practice Range',
+  tagline: 'Solo target practice with moving dummies',
+  size: 22,
+  ffa: true,
+  range: true,
+  ffaSpawns: [[-16, -14], [0, -18], [16, -14]].flatMap(([x, z]) => [{ x, z }, { x: -x, z: -z }]),
+  walls: build([], [
+    [11, -10, 4, 1.2, 3], [-6, -12, 1.2, 4, 3], [14, 10, 3, 3, 1.0], [4, -4, 3, 1.2, 1.0], [-14, 4, 1.2, 6, 3],
+  ]),
+  hazards: [],
+  theme: { ...olympus.theme },
+};
+
+export const MAPS = { olympus, foundry, frostpeak, labyrinth, necropolis, range };
 export const MAP_IDS = Object.keys(MAPS);
 export const DEFAULT_MAP = 'olympus';
 export const TEAM_MAP_IDS = MAP_IDS.filter((id) => !MAPS[id].ffa);
-export const FFA_MAP_IDS = MAP_IDS.filter((id) => MAPS[id].ffa);
+export const FFA_MAP_IDS = MAP_IDS.filter((id) => MAPS[id].ffa && !MAPS[id].range);

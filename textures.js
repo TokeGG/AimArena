@@ -328,8 +328,8 @@ const STYLES = {
     const m = hexToRgb(T.marble), md = hexToRgb(T.marbleDark), sa = hexToRgb(T.sand), sd = hexToRgb(T.sandDark);
     const light = mixc(m, [255, 255, 255], 0.45);
     return {
-      wall: surface(S, (g) => { noisyFill(g, S, m, 11, 0.22, 4, light, 0.6); veins(g, S, light, 10, 12, 2.2, 0.55); veins(g, S, shade(md, 0.7), 6, 13, 1.2, 0.35); slabs(g, S, 2, shade(md, 0.5), 14, 0.07); grain(g, S, 15, 1500); }),
-      wallDark: surface(S, (g) => { noisyFill(g, S, md, 21, 0.22, 4, shade(md, 1.5), 0.5); veins(g, S, mixc(md, [255, 255, 255], 0.35), 8, 22, 1.8, 0.4); slabs(g, S, 2, shade(md, 0.4), 24, 0.08); grain(g, S, 25, 1500); }),
+      wall: surface(S, (g) => { noisyFill(g, S, m, 11, 0.12, 4, light, 0.4); blocks(g, S, 4, 8, m, shade(md, 0.4), 14, { tone: 0.13, gap: 6, bevel: 0.3 }); veins(g, S, light, 8, 12, 1.6, 0.35); cracks(g, S, shade(md, 0.45), 4, 13, 1.1, 0.5, 18); grain(g, S, 15, 1500); }, 2.0),
+      wallDark: surface(S, (g) => { noisyFill(g, S, md, 21, 0.12, 4, shade(md, 1.35), 0.4); blocks(g, S, 4, 8, md, shade(md, 0.35), 24, { tone: 0.14, gap: 6, bevel: 0.3 }); veins(g, S, mixc(md, [255, 255, 255], 0.4), 6, 22, 1.4, 0.3); grain(g, S, 25, 1500); }, 2.0),
       sand: surface(S, (g) => { noisyFill(g, S, sa, 31, 0.2, 5, shade(sa, 1.25), 0.5); blocks(g, S, 4, 6, sa, shade(sd, 0.55), 32); cracks(g, S, shade(sd, 0.4), 5, 33, 1.2, 0.5, 20); grain(g, S, 34, 1800); }),
       sandDark: surface(S, (g) => { noisyFill(g, S, sd, 41, 0.2, 5); blocks(g, S, 4, 6, sd, shade(sd, 0.4), 42); grain(g, S, 44, 1800); }),
       floor: surface(S, (g) => { const fc = hexToRgb(parseInt(floorCss.slice(1), 16)); noisyFill(g, S, fc, 51, 0.16, 5, shade(fc, 1.3), 0.5); veins(g, S, mixc(fc, [255, 255, 255], 0.4), 7, 52, 1.6, 0.3); slabs(g, S, 1, shade(fc, 0.35), 53, 0.05); cracks(g, S, shade(fc, 0.35), 3, 54, 1.1, 0.5, 26); grain(g, S, 55, 2400); }, 1.2),
@@ -360,7 +360,7 @@ const STYLES = {
     const white = [235, 244, 252];
     return {
       wall: surface(S, (g) => { noisyFill(g, S, m, 211, 0.24, 4, [170, 205, 235], 0.7); veins(g, S, white, 12, 212, 1.4, 0.55); cracks(g, S, [60, 90, 125], 6, 213, 1.4, 0.5, 30); blotches(g, S, white, 8, 214, 16, 50, 0.35); grain(g, S, 215, 1600, 0.12, 0.05); }, 1.4),
-      wallDark: surface(S, (g) => { noisyFill(g, S, md, 221, 0.22, 4); strata(g, S, 8, md, 222); blotches(g, S, white, 6, 223, 14, 40, 0.3); cracks(g, S, [20, 28, 40], 6, 224, 1.3, 0.55, 28); grain(g, S, 225, 1800); }),
+      wallDark: surface(S, (g) => { noisyFill(g, S, md, 221, 0.14, 4); blocks(g, S, 4, 8, md, [20, 34, 52], 222, { tone: 0.14, gap: 6, bevel: 0.3 }); blotches(g, S, white, 6, 223, 14, 40, 0.3); cracks(g, S, [20, 28, 40], 6, 224, 1.3, 0.55, 28); grain(g, S, 225, 1800); }),
       sand: surface(S, (g) => { noisyFill(g, S, sa, 231, 0.2, 5, white, 0.5); blocks(g, S, 3, 5, sa, [90, 110, 135], 232, { tone: 0.12 }); blotches(g, S, white, 10, 233, 14, 40, 0.4); grain(g, S, 234, 1800, 0.12, 0.04); }),
       sandDark: surface(S, (g) => { noisyFill(g, S, sd, 241, 0.2, 5); strata(g, S, 6, sd, 242); blotches(g, S, white, 6, 243, 14, 34, 0.3); grain(g, S, 244, 1800); }),
       floor: surface(S, (g) => { noisyFill(g, S, fc, 251, 0.1, 6, [150, 190, 225], 0.5); blotches(g, S, [255, 255, 255], 16, 252, 20, 60, 0.28); cracks(g, S, [90, 130, 175], 5, 253, 1.2, 0.35, 34); blotches(g, S, [70, 90, 120], 6, 254, 10, 26, 0.22); grain(g, S, 255, 3200, 0.2, 0.05); }, 1.0),
@@ -372,8 +372,8 @@ const STYLES = {
     const fc = hexToRgb(parseInt(floorCss.slice(1), 16));
     const moss = [70, 100, 50];
     return {
-      wall: surface(S, (g) => { noisyFill(g, S, shade(m, 0.8), 311, 0.22, 5); blocks(g, S, 4, 8, m, [30, 24, 16], 312, { tone: 0.2, gap: 4 }); blotches(g, S, moss, 8, 313, 14, 36, 0.3); cracks(g, S, [25, 18, 10], 6, 314, 1.3, 0.55, 22); grain(g, S, 315, 2200); }),
-      wallDark: surface(S, (g) => { noisyFill(g, S, md, 321, 0.22, 5); blocks(g, S, 2, 4, md, [14, 10, 6], 322, { tone: 0.18, gap: 4 }); blotches(g, S, moss, 5, 323, 14, 30, 0.25); grain(g, S, 324, 2200); }),
+      wall: surface(S, (g) => { noisyFill(g, S, shade(m, 0.8), 311, 0.22, 5); blocks(g, S, 4, 8, m, [30, 24, 16], 312, { tone: 0.2, gap: 6, bevel: 0.3 }); blotches(g, S, moss, 8, 313, 14, 36, 0.3); cracks(g, S, [25, 18, 10], 6, 314, 1.3, 0.55, 22); grain(g, S, 315, 2200); }),
+      wallDark: surface(S, (g) => { noisyFill(g, S, md, 321, 0.22, 5); blocks(g, S, 2, 4, md, [14, 10, 6], 322, { tone: 0.18, gap: 6, bevel: 0.3 }); blotches(g, S, moss, 5, 323, 14, 30, 0.25); grain(g, S, 324, 2200); }),
       sand: surface(S, (g) => { noisyFill(g, S, sa, 331, 0.22, 5); blocks(g, S, 3, 6, sa, [24, 18, 10], 332, { tone: 0.2 }); blotches(g, S, moss, 6, 333, 12, 30, 0.28); cracks(g, S, [22, 16, 8], 5, 334, 1.2, 0.5, 18); grain(g, S, 335, 2000); }),
       sandDark: surface(S, (g) => { noisyFill(g, S, sd, 341, 0.22, 5); blocks(g, S, 3, 6, sd, [10, 7, 4], 342, { tone: 0.18 }); grain(g, S, 343, 2000); }),
       floor: surface(S, (g) => { noisyFill(g, S, fc, 351, 0.18, 5, shade(fc, 1.35), 0.4); slabs(g, S, 2, [12, 9, 6], 352, 0.12); blotches(g, S, moss, 7, 353, 16, 44, 0.22); cracks(g, S, [14, 10, 6], 6, 354, 1.3, 0.6, 26); grain(g, S, 355, 3000); }, 1.3),
@@ -385,8 +385,8 @@ const STYLES = {
     const fc = hexToRgb(parseInt(floorCss.slice(1), 16));
     const moss = [58, 104, 78];
     return {
-      wall: surface(S, (g) => { noisyFill(g, S, m, 411, 0.26, 4, [60, 70, 66], 0.5); blocks(g, S, 3, 6, m, [18, 22, 20], 412, { tone: 0.18, gap: 4 }); blotches(g, S, moss, 12, 413, 16, 46, 0.34); cracks(g, S, [14, 18, 16], 8, 414, 1.4, 0.65, 30); grain(g, S, 415, 2200); }),
-      wallDark: surface(S, (g) => { noisyFill(g, S, md, 421, 0.24, 4); strata(g, S, 5, md, 422); blotches(g, S, moss, 8, 423, 14, 40, 0.3); cracks(g, S, [8, 12, 10], 6, 424, 1.3, 0.6, 26); grain(g, S, 425, 2200); }),
+      wall: surface(S, (g) => { noisyFill(g, S, m, 411, 0.26, 4, [60, 70, 66], 0.5); blocks(g, S, 3, 6, m, [18, 22, 20], 412, { tone: 0.18, gap: 6, bevel: 0.3 }); blotches(g, S, moss, 12, 413, 16, 46, 0.34); cracks(g, S, [14, 18, 16], 8, 414, 1.4, 0.65, 30); grain(g, S, 415, 2200); }),
+      wallDark: surface(S, (g) => { noisyFill(g, S, md, 421, 0.16, 4); blocks(g, S, 4, 8, md, [10, 14, 12], 422, { tone: 0.16, gap: 6, bevel: 0.3 }); blotches(g, S, moss, 8, 423, 14, 40, 0.3); cracks(g, S, [8, 12, 10], 6, 424, 1.3, 0.6, 26); grain(g, S, 425, 2200); }),
       sand: surface(S, (g) => { noisyFill(g, S, sa, 431, 0.24, 5, [70, 76, 70], 0.4); blocks(g, S, 3, 5, sa, [18, 20, 18], 432, { tone: 0.2 }); blotches(g, S, moss, 9, 433, 12, 34, 0.32); cracks(g, S, [12, 14, 12], 6, 434, 1.3, 0.55, 22); grain(g, S, 435, 2000); }),
       sandDark: surface(S, (g) => { noisyFill(g, S, sd, 441, 0.24, 5); blocks(g, S, 3, 5, sd, [8, 10, 9], 442, { tone: 0.18 }); blotches(g, S, moss, 5, 443, 12, 28, 0.25); grain(g, S, 444, 2000); }),
       floor: surface(S, (g) => { cobbles(g, S, 8, fc, [10, 14, 12], 451); noisyFill_overlay(g, S, 452); blotches(g, S, moss, 14, 453, 14, 38, 0.3); grain(g, S, 455, 3200); }, 1.5),
