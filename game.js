@@ -17,6 +17,7 @@ export const MAX_REWIND = 24; // ticks (400 ms at 60 Hz): the most a shot can be
 
 // tuning
 const FIRE_TOLERANCE = 0.06; // seconds
+const PLACE_RANGE = 40; // how far a Decoy / Slow Trap can be shot
 const BUFF_TIME = 6;
 const BURN_DPS = 14, BURN_LINGER = 1.2;
 const BLEED_DPS = 6, BLEED_MOVING_MULT = 1.8, BLEED_TIME = 4;
@@ -100,7 +101,7 @@ function makePlayer(team, slot, isBot, name) {
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0,
     yaw: 0, pitch: 0, alive: true,
     model: DEFAULT_MODEL, look: sanitizeLook(null), maxHp: 150, speed: 7, healMult: 1, hp: 150,
-    loadout: randomLoadout(), cd: [0, 0, 0], fireCd: 0, sKills: 0, sDeaths: 0, dHeads: 0, dDmg: 0, dCasts: 0,
+    loadout: randomLoadout(), cd: [0, 0, 0], armed: -1, fireCd: 0, sKills: 0, sDeaths: 0, dHeads: 0, dDmg: 0, dCasts: 0,
     credit: CREDIT_MAX, rttMs: null, strikes: {}, flagT: {}, kicked: false, dyawHist: [], aimLog: [], spawnTick: 0, ammo: AMMO_START, shieldT: 0,
     lastSeq: 0, lastQueued: 0, queue: [], lastInput: NEUTRAL(),
     kills: 0, deaths: 0, lastHurt: -99, respawnT: 0, invulnT: 0,
@@ -299,7 +300,7 @@ export class Room {
       p.dvx = p.dvz = 0; p.dashT = 0;
       p.yaw = sp.yaw; p.pitch = 0; p.spawnTick = this.tick; p.dyawHist.length = 0;
       p.hp = p.maxHp; p.alive = true;
-      p.cd = [0, 0, 0]; p.fireCd = 0; p.ammo = AMMO_START; p.shieldT = 0;
+      p.cd = [0, 0, 0]; p.armed = -1; p.fireCd = 0; p.ammo = AMMO_START; p.shieldT = 0;
       clearStatuses(p);
       p.queue = [];
       p.hist = [];
@@ -492,16 +493,54 @@ export class Room {
     stepPlayer(p, inp, dt);
     p.yaw = inp.yaw;
     p.pitch = inp.pitch;
-    if (this.phase !== 'live' || !p.alive || p.polyT > 0) return; // polymorphed: no shooting, no skills
+    if (this.phase !== 'live' || !p.alive || p.polyT > 0) { p.armed = -1; return; } // polymorphed: no shooting, no skills
     if (!p.isBot) {
       inp.vt = this.clampVt(p, inp.vt);
       if (inp.shoot && p.fireCd > FIRE_INTERVAL * 0.35) this.strike(p, 'rapid', 10, 6, 25, 'firing while the weapon is still reloading');
     }
-    // small tolerance: semi-auto clients send one shot per click, so a packet landing a tick early must not be dropped
-    if (inp.shoot && p.fireCd <= FIRE_TOLERANCE && (p.ammo > 0 || this.range)) this.shoot(p, inp);
+    // skill keys first, so a key and a click that arrive together act in the order the player meant
     for (let s = 0; s < SLOT_COUNT; s++) {
-      if (inp[SLOT_FLAG[s]] && p.cd[s] <= 0) this.cast(p, s, inp);
+      if (!inp[SLOT_FLAG[s]]) continue;
+      const sp = SPELLS[p.loadout[s]];
+      if (sp && sp.aim && !p.isBot) { // aimed skill: the key arms it (press again to put it away), the next shot fires it
+        if (p.armed === s) p.armed = -1;
+        else if (p.cd[s] <= 0) p.armed = s;
+      } else if (p.cd[s] <= 0) this.cast(p, s, inp);
     }
+    // small tolerance: semi-auto clients send one shot per click, so a packet landing a tick early must not be dropped
+    if (inp.shoot && p.fireCd <= FIRE_TOLERANCE) {
+      if (p.armed >= 0) this.fireArmed(p, inp);
+      else if (p.ammo > 0 || this.range) this.shoot(p, inp);
+    }
+  }
+
+  /** The shot that carries an armed skill: costs the shot cooldown but no ammo; the skill itself lands where the shot lands. */
+  fireArmed(p, inp) {
+    const slot = p.armed;
+    p.armed = -1;
+    if (!SPELLS[p.loadout[slot]] || p.cd[slot] > 0) return;
+    p.fireCd = FIRE_INTERVAL;
+    const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
+    const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
+    const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, RANGE), RANGE);
+    const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt);
+    let t = best ? best.t : tWall;
+    if (!best && dy < 0) t = Math.min(t, -oy / dy);
+    this.events.push({ k: 'shot', id: p.id, ox: r2(ox), oy: r2(oy), oz: r2(oz), ex: r2(ox + dx * t), ey: r2(oy + dy * t), ez: r2(oz + dz * t), hit: 0, sk: p.loadout[slot] });
+    this.cast(p, slot, inp, true);
+  }
+
+  /** Where a shot from `p` lands on the ground/wall (pulled back a little so things placed there are not inside a wall). */
+  landing(p, inp, range) {
+    const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
+    const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
+    let t = Math.min(rayWorld(ox, oy, oz, dx, dy, dz, range), range);
+    if (!Number.isFinite(t)) t = range;
+    const hl = Math.hypot(dx, dz) || 1;
+    const back = Math.min(0.7, t);
+    const spot = { x: clamp(ox + dx * t - (dx / hl) * back, -ARENA + 1, ARENA - 1), y: 0, z: clamp(oz + dz * t - (dz / hl) * back, -ARENA + 1, ARENA - 1), vx: 0, vz: 0, vy: 0 };
+    resolveWalls(spot);
+    return spot;
   }
 
   // -------------------------------------------------------------- status effects
@@ -586,7 +625,7 @@ export class Room {
 
   kill(victim, attacker, head) {
     victim.hp = 0;
-    victim.alive = false;
+    victim.alive = false; victim.armed = -1;
     victim.deaths++;
     victim.sDeaths++;
     victim.respawnT = RESPAWN_TIME;
@@ -690,7 +729,7 @@ export class Room {
     if (victim.hp <= 0) this.kill(victim, attacker, head);
   }
 
-  cast(p, slot, inp) {
+  cast(p, slot, inp, aimed = false) {
     const id = p.loadout[slot];
     const spell = SPELLS[id];
     if (!spell) return;
@@ -797,14 +836,18 @@ export class Room {
         ev.tx = r2(px); ev.tz = r2(pz); ev.r = SMOKE_RADIUS;
         break;
       }
-      case 'decoy':
-        this.decoys.push({ id: nextDecoyId++, x: p.x, y: p.y, z: p.z, yaw: inp.yaw, pitch: 0, t: DECOY_TIME, team: p.team, model: p.model, look: p.look, crouch: false, hist: [] });
+      case 'decoy': {
+        const at = aimed ? this.landing(p, inp, PLACE_RANGE) : p;
+        this.decoys.push({ id: nextDecoyId++, x: at.x, y: at.y, z: at.z, yaw: inp.yaw, pitch: 0, t: DECOY_TIME, team: p.team, model: p.model, look: p.look, crouch: false, hist: [] });
+        ev.tx = r2(at.x); ev.tz = r2(at.z);
         break;
+      }
       case 'slowtrap': {
+        const at = aimed ? this.landing(p, inp, PLACE_RANGE) : p;
         const mine = this.zones.filter((z) => z.kind === 'trap' && z.src === p);
         while (mine.length >= TRAP_MAX) { const old = mine.shift(); old.t = 0; }
-        this.addZone(p, p.x, p.z, TRAP_R, TRAP_TIME, 'trap').arm = TRAP_ARM;
-        ev.tx = r2(p.x); ev.tz = r2(p.z); ev.r = TRAP_R;
+        this.addZone(p, at.x, at.z, TRAP_R, TRAP_TIME, 'trap').arm = TRAP_ARM;
+        ev.tx = r2(at.x); ev.tz = r2(at.z); ev.r = TRAP_R;
         break;
       }
       case 'mark': {
@@ -833,7 +876,7 @@ export class Room {
         ev.hit = best ? 1 : 0;
         if (best) {
           const v = best.who;
-          v.polyT = POLY_TIME; v.bindBuffT = 0; v.bleedBuffT = 0; v.overT = 0;
+          v.polyT = POLY_TIME; v.armed = -1; v.bindBuffT = 0; v.bleedBuffT = 0; v.overT = 0;
           this.events.push({ k: 'poly', v: v.id });
         }
         break;
@@ -921,7 +964,7 @@ export class Room {
 
   meFor(p) {
     return {
-      id: p.id, ack: p.lastSeq, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), am: this.range ? 99 : p.ammo, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
+      id: p.id, ack: p.lastSeq, ar: p.armed, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), am: this.range ? 99 : p.ammo, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
       st: {
         x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, dvx: p.dvx, dvz: p.dvz, dashT: p.dashT,
         rootT: p.rootT, slowT: p.slowT,

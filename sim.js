@@ -1,7 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.7.0'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.8.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
@@ -33,22 +33,24 @@ export const SPELLS = {
   dash: { name: 'Dash', cd: 5, cost: 1, desc: 'Burst of speed in your move direction.' },
   shield: { name: 'Shield', cd: 14, cost: 2, desc: 'Take 40% less damage for 2.5s.' },
   heal: { name: 'Heal', cd: 18, cost: 2, desc: 'Instantly restore 50 HP.' },
-  shockwave: { name: 'Shockwave', cd: 10, cost: 2, desc: 'Aimed shot: pushes the first enemy hit back. No damage.' },
+  shockwave: { name: 'Shockwave', cd: 10, cost: 2, aim: true, desc: 'Press, then shoot: the enemy you hit is pushed straight back. No damage.' },
   pushback: { name: 'Pushback', cd: 10, cost: 2, desc: 'Blast that shoves every enemy within 7m away from you. No damage.' },
   bind: { name: 'Bind', cd: 11, cost: 2, desc: 'Your next rifle shot roots the enemy it hits for 1.8s (6s to use it).' },
-  firepool: { name: 'Fire Pool', cd: 14, cost: 2, desc: 'Ignite the ground where you aim: 3m wide, burns enemies for 5s.' },
+  firepool: { name: 'Fire Pool', cd: 14, cost: 2, aim: true, desc: 'Press, then shoot: ignites the ground where it lands, 3m wide, burns enemies for 5s.' },
   nova: { name: 'Frost Nova', cd: 12, cost: 2, desc: 'Blast within 5m: 12 damage and 3s slow on enemies.' },
   barbed: { name: 'Barbed Rounds', cd: 14, cost: 1, desc: '6s: rifle hits make the target bleed (worse when moving).' },
   blink: { name: 'Blink', cd: 9, cost: 2, desc: 'Teleport 9m forward where you look (stops at walls).' },
-  grapple: { name: 'Grapple', cd: 8, cost: 2, desc: 'Hook the wall you aim at and pull yourself to it (up to 28m).' },
-  smoke: { name: 'Smoke', cd: 14, cost: 1, desc: 'Throw a smoke cloud where you aim. Blocks sight for 7s.' },
-  decoy: { name: 'Decoy', cd: 16, cost: 1, desc: 'A fake copy of you runs forward for 6s. Enemy shots at it are wasted.' },
-  slowtrap: { name: 'Slow Trap', cd: 12, cost: 1, desc: 'Drop a mine where you stand (max 2). The first enemy to step on it is slowed for 3s.' },
-  mark: { name: 'Mark', cd: 14, cost: 1, desc: 'Tag the enemy you aim at: your team sees them through walls for 5s.' },
-  gravity: { name: 'Gravity Well', cd: 16, cost: 2, desc: 'Pull everything in a 4.5m field toward its centre for 2.5s, slowing enemies caught in it.' },
-  polymorph: { name: 'Polymorph', cd: 18, cost: 2, desc: 'Aimed shot: turns the enemy into a sheep for 2s. They can still move, but cannot shoot or use skills.' },
+  grapple: { name: 'Grapple', cd: 8, cost: 2, aim: true, desc: 'Press, then shoot a wall: hooks it and pulls you there (up to 28m).' },
+  smoke: { name: 'Smoke', cd: 14, cost: 1, aim: true, desc: 'Press, then shoot: a smoke cloud where it lands. Blocks sight for 7s.' },
+  decoy: { name: 'Decoy', cd: 16, cost: 1, aim: true, desc: 'Press, then shoot: a fake copy of you appears where it lands for 6s. Enemy shots at it are wasted.' },
+  slowtrap: { name: 'Slow Trap', cd: 12, cost: 1, aim: true, desc: 'Press, then shoot: plants a mine where it lands (max 2). The first enemy to step on it is slowed for 3s.' },
+  mark: { name: 'Mark', cd: 14, cost: 1, aim: true, desc: 'Press, then shoot: the enemy you hit is seen by your team through walls for 5s.' },
+  gravity: { name: 'Gravity Well', cd: 16, cost: 2, aim: true, desc: 'Press, then shoot: a field where it lands pulls everything to its centre for 2.5s and slows enemies.' },
+  polymorph: { name: 'Polymorph', cd: 18, cost: 2, aim: true, desc: 'Press, then shoot: turns the enemy you hit into a sheep for 2s. They can move but cannot shoot or use skills.' },
   overcharge: { name: 'Overcharge', cd: 14, cost: 2, desc: 'Your next rifle shot deals double damage (6s to use it).' },
 };
+// `aim: true` skills are armed with their key, then fired by your next shot (no ammo used). The rest cast instantly,
+// except Bind / Barbed / Overcharge, which buff your next rifle shot.
 // Skill points: you pick 3 skills but can only spend this many points on them.
 export const LOADOUT_BUDGET = 5;
 export const loadoutCost = (ids) => ids.reduce((a, id) => a + (SPELLS[id] ? SPELLS[id].cost : 9), 0);

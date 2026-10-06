@@ -279,6 +279,10 @@
   .spell .ic { top:18px; font-size:34px; }
   .spell .rdy { background:linear-gradient(90deg, #3fbf72, #5be08d); }
   #crosshair { filter:drop-shadow(0 0 2px rgba(0,0,0,.9)); }
+  #crosshair.armed { filter:drop-shadow(0 0 6px #ffd24a) drop-shadow(0 0 2px #000) hue-rotate(0deg) saturate(2) sepia(1) brightness(1.2); }
+  .spell.armed { border-color:#ffd24a; box-shadow:0 0 22px rgba(255,210,74,.9), inset 0 0 16px rgba(255,210,74,.35); transform:translateY(-8px) scale(1.06); animation:armpulse .7s ease-in-out infinite alternate; }
+  .spell.armed .ic { filter:none; } .spell.armed .nm { color:#fff; } .spell.armed .key { top:15px; } .spell.armed .rdy { display:block; background:linear-gradient(90deg,#ffb020,#ffe070); }
+  @keyframes armpulse { to { box-shadow:0 0 34px rgba(255,210,74,1), inset 0 0 22px rgba(255,210,74,.5); } }
 
   #admin table { border-collapse:collapse; width:100%; margin:8px 0; font-size:13px; } #admin th, #admin td { text-align:left; padding:5px 8px; border-bottom:1px solid rgba(226,184,74,.15); vertical-align:top; }
   #admin th { color:var(--gold); font-weight:700; } #admin code { background:rgba(0,0,0,.4); padding:1px 5px; border-radius:4px; }
@@ -352,6 +356,7 @@
     <div class="row">
       <div><div class="hint" style="margin:0 0 4px">Graphics</div><div class="row"><button id="qh">High</button><button id="ql">Fast</button></div></div>
       <div><div class="hint" style="margin:0 0 4px">Sensitivity <span id="sensv"></span></div><input id="sens" type="range" min="0.2" max="3" step="0.05"></div>
+      <div><div class="hint" style="margin:0 0 4px">Volume <span id="volv"></span></div><input id="vol" type="range" min="0" max="1" step="0.05"></div>
     </div>
     <div class="row" style="margin-top:10px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
 

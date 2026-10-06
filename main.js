@@ -7,7 +7,7 @@ import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.7.0';
+const CLIENT_VERSION = '0.8.0';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -23,6 +23,7 @@ const cfg = {
   name: store.get('name', 'Player'),
   mode: store.get('mode', 2),
   sens: store.get('sens', 1),
+  volume: Number(store.get('volume', 0.7)),
   loadout: store.get('loadout3', DEFAULT_LOADOUT),
   look: sanitizeLook(store.get('look', { model: store.get('model', DEFAULT_MODEL) })),
   quality: store.get('quality', 'high'),
@@ -46,53 +47,73 @@ const colorOf = (tm) => (inFfa ? FFA_COLORS[tm % FFA_COLORS.length] : TEAM_COLOR
 const cssOf = (tm) => (inFfa ? hex(FFA_COLORS[tm % FFA_COLORS.length]) : TEAM_COLOR_CSS[tm]);
 
 // ------------------------------------------------------------------ audio
-let actx = null;
+let actx = null, master = null;
 function audio() {
-  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { /* ignore */ } }
+  if (!actx) {
+    try {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      // master chain: volume -> gentle low-pass (takes the sting off) -> compressor (no sudden loud peaks) -> speakers
+      master = actx.createGain();
+      master.gain.value = Number.isFinite(cfg.volume) ? cfg.volume : 0.7;
+      const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200; lp.Q.value = 0.5;
+      const comp = actx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 6;
+      master.connect(lp); lp.connect(comp); comp.connect(actx.destination);
+    } catch { /* ignore */ }
+  }
   return actx;
 }
+const setVolume = (v) => { cfg.volume = v; if (master) master.gain.value = v; };
+const SOFTEN = { square: 'triangle', sawtooth: 'triangle' }; // buzzy waves become rounder ones
 function beep(freq = 440, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
   const a = audio();
-  if (!a) return;
-  const o = a.createOscillator(), g = a.createGain();
-  o.type = type;
-  o.frequency.setValueAtTime(freq, a.currentTime);
-  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), a.currentTime + dur);
-  g.gain.setValueAtTime(vol, a.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
-  o.connect(g).connect(a.destination);
-  o.start();
-  o.stop(a.currentTime + dur);
+  if (!a || !master || cfg.volume <= 0) return;
+  const o = a.createOscillator(), g = a.createGain(), t0 = a.currentTime;
+  o.type = SOFTEN[type] || type;
+  o.frequency.setValueAtTime(freq, t0);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.linearRampToValueAtTime(vol * 0.85, t0 + 0.006); // short fade-in: no click
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(master);
+  o.start(t0);
+  o.stop(t0 + dur + 0.02);
 }
 
 function noise(dur = 0.1, vol = 0.05, freq = 2000, type = 'bandpass', q = 1) {
   const a = audio();
-  if (!a) return;
+  if (!a || !master || cfg.volume <= 0) return;
   const n = Math.max(1, Math.floor(a.sampleRate * dur));
   const buf = a.createBuffer(1, n, a.sampleRate), data = buf.getChannelData(0);
-  for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  for (let i = 0; i < n; i++) { const k = 1 - i / n; data[i] = (Math.random() * 2 - 1) * k * k; }
   const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-  src.buffer = buf; f.type = type; f.frequency.value = freq; f.Q.value = q; g.gain.value = vol;
-  src.connect(f).connect(g).connect(a.destination);
+  src.buffer = buf; f.type = type; f.frequency.value = Math.min(freq, 4500); f.Q.value = q; g.gain.value = vol;
+  src.connect(f).connect(g).connect(master);
   src.start();
 }
 const later = (ms, fn) => setTimeout(fn, ms);
 /** Every kind of hit and effect has its own sound, so you can tell what just happened with your eyes closed. */
 const SFX = {
-  hitBody() { beep(900, 0.07, 'sine', 0.08); },
-  hitHead() { beep(1500, 0.07, 'sine', 0.08); later(55, () => beep(2200, 0.09, 'sine', 0.07)); },
-  hitOver(head) { beep(110, 0.28, 'sine', 0.16, -60); noise(0.12, 0.12, 3500, 'highpass'); later(40, () => beep(head ? 2600 : 1300, 0.12, 'sawtooth', 0.06, 600)); },
-  hitBind() { beep(1900, 0.04, 'triangle', 0.08); later(50, () => beep(1500, 0.05, 'triangle', 0.08)); later(110, () => beep(240, 0.14, 'square', 0.07, -80)); },
-  hitShield() { beep(1250, 0.2, 'triangle', 0.08); beep(1880, 0.16, 'sine', 0.05); noise(0.04, 0.06, 5000, 'highpass'); },
-  hitBarbed() { noise(0.14, 0.09, 700, 'lowpass'); beep(300, 0.12, 'sawtooth', 0.05, -150); },
-  hitNova() { beep(2400, 0.12, 'sine', 0.05, -900); beep(3100, 0.1, 'sine', 0.04, -1200); },
-  hurtOver() { beep(70, 0.3, 'sine', 0.2, -30); noise(0.18, 0.1, 400, 'lowpass'); },
-  poly() { for (let i = 0; i < 4; i++) later(i * 70, () => beep(i % 2 ? 330 : 270, 0.09, 'sawtooth', 0.05, i % 2 ? -40 : 40)); },
-  trap() { noise(0.05, 0.12, 6000, 'highpass'); beep(150, 0.18, 'square', 0.08, -70); },
-  trapPlace() { beep(500, 0.05, 'square', 0.04); later(70, () => beep(380, 0.06, 'square', 0.04)); },
-  mark() { beep(1300, 0.18, 'sine', 0.07); later(130, () => beep(1300, 0.14, 'sine', 0.035)); },
-  gravity() { beep(60, 0.5, 'sine', 0.14, 120); noise(0.4, 0.05, 300, 'lowpass'); },
-  overcharge() { beep(220, 0.3, 'sawtooth', 0.06, 700); later(200, () => beep(1500, 0.1, 'sine', 0.05)); },
+  // rifle: a soft "thump" and a short breath of noise, instead of a buzzing tone
+  shot(vol = 1) { noise(0.09, 0.075 * vol, 1500, 'bandpass', 0.7); beep(130, 0.11, 'sine', 0.13 * vol, -70); },
+  dry() { noise(0.025, 0.04, 2500, 'bandpass', 1.2); },
+  arm() { beep(520, 0.06, 'sine', 0.04, 160); },
+  hitBody() { beep(620, 0.06, 'sine', 0.07, -80); },
+  hitHead() { beep(880, 0.07, 'sine', 0.07); later(50, () => beep(1320, 0.1, 'sine', 0.06)); },
+  hitOver(head) { beep(110, 0.25, 'sine', 0.15, -60); noise(0.1, 0.07, 2500, 'bandpass'); later(40, () => beep(head ? 1500 : 900, 0.12, 'sine', 0.06, 300)); },
+  hitBind() { beep(1000, 0.05, 'sine', 0.06); later(55, () => beep(780, 0.06, 'sine', 0.06)); later(110, () => beep(200, 0.14, 'sine', 0.08, -60)); },
+  hitShield() { beep(760, 0.18, 'sine', 0.07); beep(1140, 0.14, 'sine', 0.04); },
+  hitBarbed() { noise(0.12, 0.06, 700, 'lowpass'); beep(260, 0.1, 'sine', 0.06, -100); },
+  hitNova() { beep(1500, 0.12, 'sine', 0.05, -500); beep(1900, 0.1, 'sine', 0.035, -600); },
+  hurt() { beep(150, 0.14, 'sine', 0.09, -50); noise(0.06, 0.03, 600, 'lowpass'); },
+  hurtOver() { beep(70, 0.3, 'sine', 0.18, -30); noise(0.16, 0.07, 400, 'lowpass'); },
+  kill() { beep(520, 0.12, 'sine', 0.08); later(90, () => beep(780, 0.2, 'sine', 0.08)); },
+  poly() { for (let i = 0; i < 4; i++) later(i * 70, () => beep(i % 2 ? 420 : 340, 0.09, 'sine', 0.05, i % 2 ? -30 : 30)); },
+  trap() { noise(0.05, 0.07, 3500, 'bandpass'); beep(150, 0.16, 'sine', 0.1, -60); },
+  trapPlace() { beep(420, 0.05, 'sine', 0.045); later(70, () => beep(320, 0.07, 'sine', 0.045)); },
+  mark() { beep(900, 0.16, 'sine', 0.06); later(130, () => beep(900, 0.12, 'sine', 0.03)); },
+  gravity() { beep(70, 0.5, 'sine', 0.13, 110); noise(0.4, 0.04, 300, 'lowpass'); },
+  overcharge() { beep(240, 0.3, 'sine', 0.06, 500); later(200, () => beep(1000, 0.1, 'sine', 0.05)); },
+  whoosh(f = 300, vol = 0.05) { noise(0.22, vol, f, 'bandpass', 0.6); },
 };
 const hitSound = (tg, head) => {
   if (tg === 'oc') SFX.hitOver(head);
@@ -495,6 +516,7 @@ function renderMenu() {
   $('ql').classList.toggle('on', cfg.quality === 'low');
   $('sens').value = cfg.sens;
   $('sensv').textContent = Number(cfg.sens).toFixed(2);
+  $('vol').value = cfg.volume; $('volv').textContent = `${Math.round(cfg.volume * 100)}%`;
   for (const b of document.querySelectorAll('#teampick button')) b.classList.toggle('on', Number(b.dataset.team) === cfg.team);
 
   const mp = $('mappick');
@@ -522,6 +544,7 @@ $('mffa').onclick = () => { cfg.mode = 'ffa'; renderMenu(); };
 for (const b of document.querySelectorAll('#teampick button')) b.onclick = () => { cfg.team = Number(b.dataset.team); renderMenu(); };
 $('qh').onclick = () => { cfg.quality = 'high'; renderMenu(); applyQuality(); setPreview(effLook()); };
 $('ql').onclick = () => { cfg.quality = 'low'; renderMenu(); applyQuality(); setPreview(effLook()); };
+$('vol').oninput = (e) => { setVolume(Number(e.target.value)); store.set('volume', cfg.volume); $('volv').textContent = `${Math.round(cfg.volume * 100)}%`; if (audio()) { SFX.hitBody(); } };
 $('sens').oninput = (e) => { cfg.sens = Number(e.target.value); $('sensv').textContent = cfg.sens.toFixed(2); };
 $('ver').textContent = `v${CLIENT_VERSION}`;
 
@@ -950,6 +973,8 @@ let shotCount = 0;
 let meAmmo = AMMO_START, ammoShown = -1, gainT = 0;
 let fireCd = 0, kick = 0, flashT = 0, shootBuf = 0, eyeCur = EYE_H;
 let castQ = false, castE = false, castR = false;
+let meArmed = -1, armHold = 0; // slot of the aimed skill waiting for your next shot (-1 = none); armHold = ignore the server's value for a moment after we change it
+const SKILL_COLOR = { shockwave: 0xffb347, firepool: 0xff6a1a, grapple: 0xcfd8e6, smoke: 0xc8ccd4, decoy: 0x8fd0ff, slowtrap: 0x6ab8ff, mark: 0xffd24a, gravity: 0xb36bff, polymorph: 0xffffff };
 const keys = {};
 const me = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0, slowT: 0, speed: MOVE_SPEED, crouch: false };
 let meAlive = true, meHp = 100, meMax = 100, meSf = 0, meBf = 0, meCd = [0, 0, 0], meLoadout = cfg.loadout, cdAt = 0;
@@ -1249,8 +1274,9 @@ function onSnapshot(d) {
     const px = me.x, py = me.y, pz = me.z;
     Object.assign(me, toState(d.me.st));
     meCd = d.me.cd; cdAt = now;
+    if (performance.now() > armHold) meArmed = d.me.ar === undefined ? -1 : d.me.ar;
     pending = pending.filter((i) => i.seq > d.me.ack);
-    if (d.me.am !== undefined) meAmmo = Math.max(0, d.me.am - pending.filter((i) => i.shoot).length);
+    if (d.me.am !== undefined) meAmmo = Math.max(0, d.me.am - pending.filter((i) => i.shoot && !i.sk).length);
     if (meAlive && phase !== 'countdown') for (const i of pending) stepPlayer(me, i, DT);
     const ox = px - me.x, oy = py - me.y, oz = pz - me.z;
     if (Math.hypot(ox, oy, oz) < 3) { errOff.x += ox; errOff.y += oy; errOff.z += oz; }
@@ -1271,10 +1297,12 @@ function handleEvent(ev, d) {
   if (ev.k === 'shot') {
     if (ev.id === myId) return;
     const shooter = d.byId[ev.id];
+    if (ev.sk && (ev.sk === 'shockwave' || ev.sk === 'polymorph' || ev.sk === 'grapple')) return; // those draw their own beam
+    if (ev.sk) { addTracer([ev.ox, ev.oy - 0.25, ev.oz], [ev.ex, ev.ey, ev.ez], SKILL_COLOR[ev.sk] || 0xffffff, 0.3, 0.035); return; }
     addTracer([ev.ox, ev.oy - 0.25, ev.oz], [ev.ex, ev.ey, ev.ez], ev.oc ? 0xffd24a : ev.bd ? 0xb36bff : shooter ? colorOf(shooter.tm) : 0xffffff, ev.bd || ev.oc ? 0.25 : 0.1, ev.bd || ev.oc ? 0.03 : 0.012);
     const dist = Math.hypot(ev.ox - cam.x, ev.oz - cam.z);
     const vol = 0.04 * clamp(1 - dist / 60, 0, 1);
-    if (vol > 0.002) beep(300, 0.07, 'square', vol, -120);
+    if (vol > 0.002) SFX.shot(vol / 0.04 * 0.5);
   } else if (ev.k === 'hit') {
     if (ev.a === myId) {
       const h = $('hitm');
@@ -1290,7 +1318,7 @@ function handleEvent(ev, d) {
       const f = $('flash');
       f.classList.add('on');
       setTimeout(() => f.classList.remove('on'), 60);
-      if (ev.tg === 'oc') SFX.hurtOver(); else beep(140, 0.15, 'sawtooth', 0.07, -60);
+      if (ev.tg === 'oc') SFX.hurtOver(); else SFX.hurt();
       const at = d.byId[ev.a];
       if (at && at.id !== myId) showDamageDir(at.x, at.z);
     }
@@ -1301,14 +1329,14 @@ function handleEvent(ev, d) {
     row.innerHTML = `<span style="color:${col(a)}">${nameOf(ev.a)}</span> ${ev.head ? '&#127919;' : '&#10140;'} <span style="color:${col(v)}">${nameOf(ev.v)}</span>`;
     $('killfeed').appendChild(row);
     setTimeout(() => row.remove(), 5000);
-    if (ev.a === myId) { beep(600, 0.18, 'triangle', 0.09, 500); rs.kills++; }
+    if (ev.a === myId) { SFX.kill(); rs.kills++; }
     if (v && a && ev.a !== ev.v) killFx(a.b ? 0 : decodeLook(a.md, a.lk).fx, ev.x ?? v.x, ev.y ?? v.y, ev.z ?? v.z, colorOf(a.tm));
     if (ev.v === myId && ev.a !== myId) startKillCam(ev.a);
   } else if (ev.k === 'spell') {
     if (ev.s === 'shockwave') {
       addTracer([ev.ox, ev.oy - 0.25, ev.oz], [ev.ex, ev.ey, ev.ez], 0xffb347, 0.3, 0.05);
       ring(ev.ex, ev.ey - 0.9, ev.ez, 0xffb347, 2.2, 0.4);
-      beep(90, 0.3, 'sawtooth', 0.08, -40);
+      SFX.whoosh(250, 0.07); beep(110, 0.2, 'sine', 0.08, -50);
     }
     else if (ev.s === 'heal') { ring(ev.x, ev.y, ev.z, 0x4ade80, 1.2, 0.7, true); beep(520, 0.25, 'sine', 0.06, 400); }
     else if (ev.s === 'shield') { ring(ev.x, ev.y, ev.z, 0x7fe9ff, 1.4, 0.5); beep(700, 0.2, 'triangle', 0.05, -300); }
@@ -1521,9 +1549,9 @@ function step() {
   if (!playing || spec || !ws || ws.readyState !== 1) return;
   fireCd = Math.max(0, fireCd - DT);
   shootBuf = Math.max(0, shootBuf - DT);
-  if (!meAlive || phase === 'countdown') { castQ = castE = castR = false; return; }
+  if (!meAlive || phase === 'countdown') { castQ = castE = castR = false; meArmed = -1; return; }
   const sheep = (meSf & 32) !== 0; // polymorphed: the server ignores shots and skills, so don't predict them either
-  if (sheep) { castQ = castE = castR = false; shootBuf = 0; }
+  if (sheep) { castQ = castE = castR = false; shootBuf = 0; meArmed = -1; }
   const inp = {
     seq: ++seq,
     mx: (held('right') ? 1 : 0) - (held('left') ? 1 : 0),
@@ -1534,10 +1562,21 @@ function step() {
     shoot: false,
     q: castQ, e: castE, r: castR,
   };
+  // aimed skills: the key arms them (press again to put away); the next shot fires them
+  {
+    const tNow = performance.now();
+    [inp.q, inp.e, inp.r].forEach((pressed, i) => {
+      const sp = SPELLS[meLoadout[i]];
+      if (!pressed || !sp || !sp.aim) return;
+      const rem = Math.max(0, (meCd[i] || 0) - (tNow - cdAt) / 1000);
+      if (meArmed === i) meArmed = -1; else if (rem <= 0.05) { meArmed = i; SFX.arm(); }
+      armHold = tNow + 300;
+    });
+  }
   if (shootBuf > 0 && locked && phase === 'live' && fireCd <= 0) {
     shootBuf = 0;
-    if (meAmmo > 0) inp.shoot = true;
-    else { fireCd = 0.25; beep(120, 0.06, 'square', 0.05, 0); gainT = -performance.now() - 900; } // dry click: flash NO AMMO
+    if (meAmmo > 0 || meArmed >= 0) inp.shoot = true;
+    else { fireCd = 0.25; SFX.dry(); gainT = -performance.now() - 900; } // dry click: flash NO AMMO
   }
   // Tell the server which moment of the world we are looking at, so it can rewind enemies to match.
   if (inp.shoot || inp.q || inp.e || inp.r) inp.vt = viewTick(performance.now());
@@ -1546,7 +1585,27 @@ function step() {
   pending.push(inp);
   if (pending.length > 120) pending.shift();
   ws.send(JSON.stringify({ t: 'in', ...inp }));
-  if (inp.shoot) { fireCd = FIRE_INTERVAL; meAmmo = Math.max(0, meAmmo - 1); rs.shots++; localShot(); }
+  if (inp.shoot) {
+    fireCd = FIRE_INTERVAL;
+    if (meArmed >= 0) { // this shot carries the armed skill: no ammo, no rifle damage
+      inp.sk = true;
+      localSkillShot(meLoadout[meArmed]);
+      meArmed = -1; armHold = performance.now() + 300;
+    } else { meAmmo = Math.max(0, meAmmo - 1); rs.shots++; localShot(); }
+  }
+}
+
+function localSkillShot(id) {
+  const [dx, dy, dz] = lookDir(yaw, pitch);
+  const ex = me.x, ey = me.y + eyeH(me), ez = me.z;
+  let t = rayWorld(ex, ey, ez, dx, dy, dz, 80);
+  if (!Number.isFinite(t)) t = 80;
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+  const start = [ex + rx * 0.25 + dx * 0.7, ey - 0.22 + dy * 0.7, ez + rz * 0.25 + dz * 0.7];
+  addTracer(start, [ex + dx * t, ey + dy * t, ez + dz * t], SKILL_COLOR[id] || 0xffffff, 0.3, 0.035);
+  flashT = 0.05;
+  kick = 0.09;
+  SFX.whoosh(900, 0.06); beep(180, 0.1, 'sine', 0.08, -60);
 }
 
 /** Fractional server tick that other players are currently drawn at (same logic as sampleRemote). */
@@ -1575,7 +1634,7 @@ function localShot() {
   addTracer(start, [ex + dx * t, ey + dy * t, ez + dz * t], overShot ? 0xffd24a : bindShot ? 0xb36bff : colorOf(myTeam), bindShot || overShot ? 0.25 : 0.1, bindShot || overShot ? 0.03 : 0.012);
   flashT = 0.04;
   kick = 0.07;
-  beep(220, 0.06, 'square', 0.05, -100);
+  SFX.shot();
 }
 
 // ------------------------------------------------------------------ rendering
@@ -1808,6 +1867,13 @@ function updateHud(now) {
     setText(spells[i].querySelector('.cdt'), isReady || !meAlive ? '' : rem < 1 ? rem.toFixed(1) : String(Math.ceil(rem)));
   }
 
+  for (let i = 0; i < spells.length; i++) {
+    const on = meAlive && meArmed === i;
+    spells[i].classList.toggle('armed', on);
+    const tag = spells[i].querySelector('.rdy'); const want = on ? 'SHOOT!' : 'READY';
+    if (tag.textContent !== want) tag.textContent = want;
+  }
+  $('crosshair').classList.toggle('armed', meAlive && meArmed >= 0);
   const BUFF_BIT = { barbed: 2, bind: 8, overcharge: 4 };
   for (let i = 0; i < spells.length; i++) spells[i].classList.toggle('buffed', !!(meAlive && (meBf & (BUFF_BIT[meLoadout[i]] || 0))));
   const tags = [];
@@ -1819,6 +1885,7 @@ function updateHud(now) {
     if (meBf & 2) tags.push('<span style="color:#ff6a80">BARBED ROUNDS</span>');
     if (meBf & 8) tags.push('<span style="color:#c79bff">BIND: NEXT SHOT ROOTS</span>');
     if (meBf & 4) tags.push('<span style="color:#ffd24a">OVERCHARGE: NEXT SHOT x2</span>');
+    if (meArmed >= 0 && SPELLS[meLoadout[meArmed]]) tags.push(`<span style="color:#ffe9a0">${esc(SPELLS[meLoadout[meArmed]].name.toUpperCase())} ARMED: SHOOT TO CAST</span>`);
     if (meSf & 32) tags.push('<span style="color:#fff">BAA! YOU ARE A SHEEP</span>');
   }
   const tagHtml = tags.join('');

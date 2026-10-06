@@ -83,6 +83,8 @@ Maps use generated textures (marble, forged metal, ice, brick, crypt stone) with
 
 Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
 
+**How skills fire.** Most skills are shot-based. Instant: Dash, Shield, Heal, Pushback, Frost Nova, Blink. Buff your next rifle shot: Bind, Barbed Rounds, Overcharge. **Aimed** (marked "Press, then shoot" in the picker): Shockwave, Fire Pool, Grapple, Smoke, Decoy, Slow Trap, Mark, Gravity Well, Polymorph. Press the key (the card glows gold, crosshair turns gold, "ARMED: SHOOT TO CAST" shows), then click: that shot carries the skill, uses no ammo, does no rifle damage, and starts the cooldown. Press the key again to put it away, or press another aimed skill's key to swap. Decoy and Slow Trap land where the shot lands. The cooldown only starts when the shot fires. Dying, a new round or Polymorph clears the armed skill. In `sim.js` a skill is aimed when its entry has `aim: true`.
+
 | Spell | Cooldown | Effect |
 |---|---|---|
 | Dash | 5s | Burst of speed in your move direction |
@@ -104,7 +106,7 @@ Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
 | Polymorph | 18s | Aimed shot: turns the enemy into a sheep for 2s. They can move but cannot shoot or cast |
 | Overcharge | 14s | Your next rifle shot (6s to use it) does double damage |
 
-Rifle: 22 body / 45 headshot damage, 150 HP, 0.5s between shots. Lava on Foundry burns anyone touching the floor in it.
+Rifle: 22 body / 45 headshot damage, 150 HP, 0.5s between shots. Sounds are soft synthesized tones with a Volume slider under Options. Lava on Foundry burns anyone touching the floor in it.
 
 ## Safety and anti-cheat
 
