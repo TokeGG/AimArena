@@ -58,6 +58,7 @@ function sanitize(rec) {
     username: rec.username, rating: rec.rating, wins: rec.wins,
     losses: rec.losses, matches: rec.matches, created: rec.created,
     kills: rec.kills || 0, deaths: rec.deaths || 0, mwins: rec.mwins || 0, mplayed: rec.mplayed || 0, xp: rec.xp || 0,
+    prof: rec.prof ? { ...rec.prof } : {}, grants: Array.isArray(rec.grants) ? rec.grants.map((g) => ({ ...g })) : [],
   };
 }
 
@@ -67,6 +68,7 @@ export function publicProfile(user) {
     losses: user.losses, matches: user.matches, rank: rankFor(user.rating),
     kills: user.kills || 0, deaths: user.deaths || 0, mwins: user.mwins || 0, mplayed: user.mplayed || 0, xp: user.xp || 0,
     daily: user.daily || dailyView({}), rivals: user.rivals || {},
+    prof: user.prof || {}, grants: user.grants || [],
   };
 }
 
@@ -188,7 +190,7 @@ export function createAuth(store) {
         .filter((u) => (by === 'rating' ? u.matches > 0 : val(u) > 0))
         .sort((a, b) => val(b) - val(a) || b.rating - a.rating)
         .slice(0, limit)
-        .map((u) => ({ username: u.username, value: val(u), rating: u.rating, kills: u.kills, wins: u.mwins, xp: u.xp }));
+        .map((u) => ({ username: u.username, value: val(u), rating: u.rating, kills: u.kills, mwins: u.mwins, wins: u.mwins, xp: u.xp, prof: u.prof, grants: u.grants }));
     },
 
     /** Add match results to an account (kills, deaths, xp, match played / won). */

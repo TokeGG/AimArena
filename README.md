@@ -145,6 +145,14 @@ Without `ADMIN_KEY` the page says the admin is switched off and tells you what t
 - **Practice** (menu tile): *Aim range* is the old target range. *Custom match* is a private match against bots with your own rules: mode and map, bot level, rounds to win and round length (or kills to win and match length in free-for-all), skills on/off, headshots only, infinite ammo. Nothing counts toward stats, rank or challenges, and it is never listed under Watch live.
 - **Quick Play** fills a room that already has players (taking over a bot slot) before it makes a new room. The bot level of a room is set by whoever created it.
 
+## Titles, icons and name colours (v0.9.1)
+
+Profile > **Edit profile** (signed in). Pick a **title** (Rookie, Marksman, Duelist, Gladiator, Champion, Legend by level; Slayer / Reaper by kills; Victor / Warlord by match wins; Gold / Platinum / Diamond / Olympian by rating), an **icon** (12, unlocked by level, the crown at rating 1800) and a **name colour** (9, by level). Locked ones show what unlocks them. What you pick shows next to your name on the scoreboard, recap, leaderboard, kill feed and above your head (icon).
+
+**Being the owner:** open `/admin`, enter your key, tab **Owner & titles**, type your game account name and press Make owner (or set the `OWNER_USERS` env var on Render). Then Profile > Edit profile has an **Owner: your own** box where you can type any title, any emoji icon and any name colour, plus an OWNER title.
+
+**Awarding others:** same admin tab, type an account name, a title, an icon and a colour, press Award. They get it in their editor and can wear it; you can remove it again. Everything is checked on the server, so nobody can wear what they have not earned or been given.
+
 ## Rivals and sounds
 
 - Rivalry: every kill between two signed-in human players on opposite teams adds to a lifetime head-to-head. From the second encounter a toast shows `you 7 - 4 them` (with NEMESIS when you are 2+ behind). Profile lists your top rivals. Bots and guests do not count.

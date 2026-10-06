@@ -1,7 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.9.0'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.9.1'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
@@ -355,5 +355,99 @@ export function dailyFor(key) {
     const goal = d.goals[tier];
     out.push({ id: d.id, stat: d.stat, goal, tier, xp: DAILY_XP[tier], text: d.text.replace('{n}', goal).replace('{s}', goal === 1 ? '' : 'es') });
   }
+  return out;
+}
+
+// ====================================================================== profile: titles, icons, name colours
+// Shared by the server (validates what a player may wear) and the client (editor, display).
+// req = what unlocks it: { lv } account level, { kills } lifetime kills, { mwins } match wins, { rating } ranked rating.
+export const PROF_TITLES = [
+  { id: 'rookie', name: 'Rookie', color: '#b8b8b8', req: { lv: 1 } },
+  { id: 'marksman', name: 'Marksman', color: '#8fd18f', req: { lv: 5 } },
+  { id: 'duelist', name: 'Duelist', color: '#6fc3ff', req: { lv: 10 } },
+  { id: 'gladiator', name: 'Gladiator', color: '#ffb04a', req: { lv: 15 } },
+  { id: 'champion', name: 'Champion', color: '#c58bff', req: { lv: 20 } },
+  { id: 'legend', name: 'Legend', color: '#ffd54a', req: { lv: MAX_LEVEL } },
+  { id: 'slayer', name: 'Slayer', color: '#ff7a62', req: { kills: 100 } },
+  { id: 'reaper', name: 'Reaper', color: '#ff4d4d', req: { kills: 1000 } },
+  { id: 'victor', name: 'Victor', color: '#8fd18f', req: { mwins: 10 } },
+  { id: 'warlord', name: 'Warlord', color: '#ff9a3c', req: { mwins: 50 } },
+  { id: 'gold', name: 'Gold Contender', color: '#f5c542', req: { rating: 1200 } },
+  { id: 'platinum', name: 'Platinum Contender', color: '#6fe0d0', req: { rating: 1400 } },
+  { id: 'diamond', name: 'Diamond Contender', color: '#7fb8ff', req: { rating: 1600 } },
+  { id: 'olympian', name: 'Olympian', color: '#ffe9a0', req: { rating: 1800 } },
+];
+export const PROF_ICONS = [
+  { id: 'target', ch: '\u{1F3AF}', name: 'Target', req: { lv: 1 } },
+  { id: 'sword', ch: '⚔️', name: 'Swords', req: { lv: 3 } },
+  { id: 'shield', ch: '\u{1F6E1}️', name: 'Shield', req: { lv: 5 } },
+  { id: 'flame', ch: '\u{1F525}', name: 'Flame', req: { lv: 7 } },
+  { id: 'snow', ch: '❄️', name: 'Frost', req: { lv: 9 } },
+  { id: 'bolt', ch: '⚡', name: 'Bolt', req: { lv: 11 } },
+  { id: 'eagle', ch: '\u{1F985}', name: 'Eagle', req: { lv: 13 } },
+  { id: 'wolf', ch: '\u{1F43A}', name: 'Wolf', req: { lv: 15 } },
+  { id: 'skull', ch: '\u{1F480}', name: 'Skull', req: { lv: 17 } },
+  { id: 'dragon', ch: '\u{1F409}', name: 'Dragon', req: { lv: 20 } },
+  { id: 'temple', ch: '\u{1F3DB}️', name: 'Temple', req: { lv: 25 } },
+  { id: 'crown', ch: '\u{1F451}', name: 'Crown', req: { rating: 1800 } },
+];
+export const PROF_COLORS = [
+  { id: 'white', hex: '#ffffff', name: 'White', req: { lv: 1 } },
+  { id: 'green', hex: '#7be07b', name: 'Green', req: { lv: 3 } },
+  { id: 'cyan', hex: '#5fd8f0', name: 'Cyan', req: { lv: 6 } },
+  { id: 'yellow', hex: '#ffe14d', name: 'Yellow', req: { lv: 9 } },
+  { id: 'orange', hex: '#ff9a3c', name: 'Orange', req: { lv: 12 } },
+  { id: 'pink', hex: '#ff7ad0', name: 'Pink', req: { lv: 15 } },
+  { id: 'purple', hex: '#b58bff', name: 'Purple', req: { lv: 18 } },
+  { id: 'red', hex: '#ff5a4a', name: 'Red', req: { lv: 21 } },
+  { id: 'gold', hex: '#e2b84a', name: 'Gold', req: { lv: 25 } },
+];
+export const OWNER_TITLE = { name: 'OWNER', color: '#ffd54a' };
+
+/** Does an account (stats = { xp, kills, mwins, rating }) meet a requirement? */
+export function profMeets(req, s) {
+  s = s || {};
+  if (req.lv) return levelFor(s.xp || 0) >= req.lv;
+  if (req.kills) return (s.kills || 0) >= req.kills;
+  if (req.mwins) return (s.mwins || 0) >= req.mwins;
+  if (req.rating) return (s.rating || 0) >= req.rating;
+  return true;
+}
+export function profReqText(req) {
+  if (req.lv) return `Level ${req.lv}`;
+  if (req.kills) return `${req.kills} kills`;
+  if (req.mwins) return `${req.mwins} match wins`;
+  if (req.rating) return `Rating ${req.rating}`;
+  return '';
+}
+const cleanText = (t, n) => String(t == null ? '' : t).replace(/[\u0000-\u001f\u007f<>&"'`\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, n);
+const isHex = (c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+export const cleanProfText = cleanText;
+export const cleanProfIcon = (t) => Array.from(cleanText(t, 16)).slice(0, 3).join('');
+
+/** Reduce whatever the client sent to the fields we store. */
+export function cleanProfPick(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const id = (v) => (typeof v === 'string' && /^[a-z0-9:_-]{1,24}$/i.test(v) ? v : '');
+  return { title: id(r.title), icon: id(r.icon), color: id(r.color), ct: cleanText(r.ct, 20), cc: isHex(r.cc) ? r.cc : '', ci: cleanProfIcon(r.ci), cn: isHex(r.cn) ? r.cn : '' };
+}
+
+/**
+ * What a player is actually allowed to display: { i: icon text, t: title text, tc: title colour, nc: name colour }.
+ * pick = stored choice; s = stats; grants = [{ id, text, icon, color }] the owner awarded; owner = free-form custom allowed.
+ * Anything not unlocked silently falls back to nothing, so the server can run this on every join.
+ */
+export function resolveProf(pick, s, grants = [], owner = false) {
+  const p = cleanProfPick(pick);
+  const out = { i: '', t: '', tc: '', nc: '' };
+  if (p.title === 'owner' && owner) { out.t = OWNER_TITLE.name; out.tc = OWNER_TITLE.color; }
+  else if (p.title === 'custom' && owner && p.ct) { out.t = p.ct; out.tc = p.cc || OWNER_TITLE.color; }
+  else if (p.title.startsWith('g:')) { const g = grants.find((x) => `g:${x.id}` === p.title); if (g) { out.t = cleanText(g.text, 20); out.tc = isHex(g.color) ? g.color : '#ffffff'; } }
+  else { const t = PROF_TITLES.find((x) => x.id === p.title); if (t && profMeets(t.req, s)) { out.t = t.name; out.tc = t.color; } }
+  if (p.icon === 'custom' && owner && p.ci) out.i = p.ci;
+  else if (p.icon.startsWith('g:')) { const g = grants.find((x) => `g:${x.id}` === p.icon); if (g && g.icon) out.i = cleanProfIcon(g.icon); }
+  else { const ic = PROF_ICONS.find((x) => x.id === p.icon); if (ic && profMeets(ic.req, s)) out.i = ic.ch; }
+  if (p.color === 'custom' && owner && p.cn) out.nc = p.cn;
+  else { const c = PROF_COLORS.find((x) => x.id === p.color); if (c && profMeets(c.req, s)) out.nc = c.hex; }
   return out;
 }

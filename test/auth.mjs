@@ -131,7 +131,7 @@ async function scenario(store) {
   // profile
   assert.deepEqual(publicProfile(u), {
     username: 'Alice_1', rating: 1000, wins: 20, losses: 0, matches: 20, rank: 'Silver', kills: 0, deaths: 0, mwins: 0, mplayed: 0, xp: 0,
-    daily: { day: dayKey(), prog: {}, done: [] }, rivals: {},
+    daily: { day: dayKey(), prog: {}, done: [] }, rivals: {}, prof: {}, grants: [],
   });
   // a login still works after updates (hash preserved)
   assert.equal((await auth.login('alice_1', 'hunter22')).ok, true);

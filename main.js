@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import {
   DT, EYE_H, eyeH, FIRE_INTERVAL, LOOK_UNLOCK, levelFor, xpForLevel, clampLook, MAX_LEVEL, LOADOUT_BUDGET, loadoutCost, AMMO_START, AMMO_KILL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL, BODY_DMG, HEAD_DMG,
+  PROF_TITLES, PROF_ICONS, PROF_COLORS, OWNER_TITLE, profMeets, profReqText, resolveProf, cleanProfIcon,
   MOVE_SPEED, VERSION, dayKey, dailyFor, msUntilDailyReset, MAPS, LOOK_PARTS, LOOK_PALETTES, DEFAULT_LOOK, sanitizeLook, randomLook, decodeLook, encodeLook, MAP_IDS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, useMap, stepPlayer, lookDir, rayWorld, spawnPoint,
 } from '/sim.js';
 import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, placeShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.9.0';
+const CLIENT_VERSION = '0.9.1';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -432,10 +433,22 @@ async function apiPost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body || {}) });
   return r.json();
 }
+
+// ------------------------------------------------------------------ titles, icons and name colours (profile)
+const HEX = /^#[0-9a-f]{6}$/i;
+const pfObj = (pf) => (Array.isArray(pf) ? { i: pf[0], t: pf[1], tc: pf[2], nc: pf[3] } : pf && typeof pf === 'object' ? pf : null);
+/** Icon + coloured name + title, as HTML. `name` is plain text; `base` is the colour used when the player picked none. */
+function pfHtml(pf, name, base = '') {
+  const o = pfObj(pf) || {};
+  const nc = HEX.test(o.nc || '') ? o.nc : base;
+  const tc = HEX.test(o.tc || '') ? o.tc : '#ffffff';
+  return `${o.i ? `<span class="pfi">${esc(o.i)}</span> ` : ''}<span${nc ? ` style="color:${nc}"` : ''}>${esc(name)}</span>${o.t ? ` <em class="pft" style="color:${tc}">${esc(o.t)}</em>` : ''}`;
+}
+const wear = (a) => resolveProf(a.prof, a, a.grants || [], !!a.owner);
 function renderAcct() {
   const box = $('acct');
   if (account) {
-    box.innerHTML = `<div class="who"><b>${esc(account.username)}</b><span class="rankpill">${esc(account.rank)}</span><small>Lv ${levelFor(account.xp || 0)} &middot; ${account.rating} rating &middot; ${account.kills || 0} kills &middot; ${account.mwins || 0} wins</small></div><button id="logoutbtn">Log out</button>`;
+    box.innerHTML = `<div class="who"><b>${pfHtml(wear(account), account.username)}</b><span class="rankpill">${esc(account.rank)}</span><small>Lv ${levelFor(account.xp || 0)} &middot; ${account.rating} rating &middot; ${account.kills || 0} kills &middot; ${account.mwins || 0} wins</small></div><button id="logoutbtn">Log out</button>`;
     $('logoutbtn').onclick = async () => { try { await apiPost('/api/logout'); } catch { /* ignore */ } token = ''; store.set('token', ''); account = null; renderAcct(); };
   } else {
     box.innerHTML = '<div class="who">Playing as guest<small>Sign in to keep your rank and play ranked</small></div><button id="loginbtn">Sign in</button>';
@@ -886,10 +899,11 @@ function setPreview(look) {
 }
 
 function drawTag(ent, pd, ally) {
-  const key = `${pd.n}|${pd.hp}|${pd.mh}|${ally}|${hsVer}`;
+  const label = (pd.pf && pd.pf[0] ? `${pd.pf[0]} ` : '') + pd.n;
+  const key = `${label}|${pd.hp}|${pd.mh}|${ally}|${hsVer}`;
   if (key === ent.key) return;
   ent.key = key;
-  paintPlate(ent.cv, pd.n, pd.hp, pd.mh, ally);
+  paintPlate(ent.cv, label, pd.hp, pd.mh, ally);
   ent.tex.needsUpdate = true;
 }
 
@@ -1259,7 +1273,7 @@ async function loadLeaderboard() {
   if (!j.rows.length) { box.innerHTML = '<div class="empty">Nobody here yet. Sign in and play a match to get on the board.</div>'; return; }
   box.innerHTML = j.rows.map((r, i) => {
     const me = account && r.username.toLowerCase() === account.username.toLowerCase();
-    return `<div class="lbrow${me ? ' me' : ''}"><span class="pos">${i + 1}</span><span class="nm">${esc(r.username)} <em>Lv ${levelFor(r.xp || 0)}</em></span><b>${r.value}</b><small>${unit}</small></div>`;
+    return `<div class="lbrow${me ? ' me' : ''}"><span class="pos">${i + 1}</span><span class="nm">${pfHtml(r.pf, r.username)} <em>Lv ${levelFor(r.xp || 0)}</em></span><b>${r.value}</b><small>${unit}</small></div>`;
   }).join('');
   $('lbnote').classList.toggle('hidden', !!j.persistent);
 }
@@ -1278,7 +1292,7 @@ function renderProfile() {
   for (const [k, label] of [['helm', 'Helmet'], ['shoulder', 'Shoulders'], ['back', 'Back'], ['mat', 'Material'], ['gun', 'Rifle skin'], ['fx', 'Kill effect']]) {
     LOOK_UNLOCK[k].forEach((req, i) => { if (req === lv + 1) next.push(LOOK_PARTS[k][i]); });
   }
-  box.innerHTML = `<div class="who"><b>${esc(a.username)}</b><span class="rankpill">${esc(a.rank)}</span></div>
+  box.innerHTML = `<div class="who"><b>${pfHtml(wear(a), a.username)}</b><span class="rankpill">${esc(a.rank)}</span><button id="peopen" style="margin-left:auto">Edit profile</button></div>
     <div class="lvl"><b>Level ${lv}</b><div class="xpbar"><i style="width:${pct}%"></i></div><small>${lv >= MAX_LEVEL ? 'MAX' : `${a.xp - lo} / ${hi - lo} XP to level ${lv + 1}${next.length ? ` &middot; unlocks ${esc(next.join(', '))}` : ''}`}</small></div>
     <div class="statgrid">
       <div><b>${a.mwins || 0}</b><small>match wins</small></div><div><b>${a.mplayed || 0}</b><small>matches</small></div>
@@ -1286,6 +1300,7 @@ function renderProfile() {
       <div><b>${kd}</b><small>K/D</small></div><div><b>${a.rating}</b><small>rating</small></div>
       <div><b>${a.wins}-${a.losses}</b><small>ranked W-L</small></div><div><b>${a.xp || 0}</b><small>total XP</small></div>
     </div>${rivalsHtml(a)}`;
+  $('peopen').onclick = openProfEditor;
 }
 function rivalsHtml(a) {
   const rows = Object.values(a.rivals || {}).sort((x, y) => (y.k + y.d) - (x.k + x.d)).slice(0, 6);
@@ -1309,6 +1324,76 @@ $('dailyclose').onclick = () => { $('daily').classList.add('hidden'); clearInter
 
 // Admin is its own page (/admin), served by the server itself.
 $('adminbtn').onclick = () => { location.href = '/admin'; };
+
+
+// ---- profile editor
+let peDraft = null;
+function openProfEditor() {
+  if (!account) return;
+  peDraft = { title: '', icon: '', color: '', ct: '', cc: '#ffd54a', ci: '', cn: '#ffffff', ...(account.prof || {}) };
+  if (!HEX.test(peDraft.cc || '')) peDraft.cc = '#ffd54a';
+  if (!HEX.test(peDraft.cn || '')) peDraft.cn = '#ffffff';
+  renderProfEditor();
+  $('pe').classList.remove('hidden');
+}
+function renderProfEditor() {
+  const a = account, d = peDraft, owner = !!a.owner, grants = a.grants || [];
+  const w = resolveProf(d, a, grants, owner);
+  const box = $('pelist');
+  box.innerHTML = '';
+  $('peprev').innerHTML = pfHtml(w, a.username);
+  const sect = (t) => { const h3 = document.createElement('h3'); h3.textContent = t; h3.style.margin = '14px 0 6px'; box.appendChild(h3); const g = document.createElement('div'); g.className = 'pegrid'; box.appendChild(g); return g; };
+  const btn = (g, label, on, locked, hint, click, style) => {
+    const b = document.createElement('button');
+    b.className = (on ? 'on ' : '') + (locked ? 'locked' : '');
+    b.innerHTML = `${label}${locked ? `<small>${esc(hint)}</small>` : ''}`;
+    if (style) b.style.cssText = style;
+    if (!locked) b.onclick = () => { click(); renderProfEditor(); };
+    g.appendChild(b);
+  };
+  // title
+  let g = sect('Title');
+  btn(g, 'None', !d.title, false, '', () => { d.title = ''; });
+  if (owner) btn(g, `<span style="color:${OWNER_TITLE.color}">${OWNER_TITLE.name}</span>`, d.title === 'owner', false, '', () => { d.title = 'owner'; });
+  for (const x of grants) if (x.text) btn(g, `<span style="color:${esc(x.color)}">${esc(x.text)}</span><small>awarded</small>`, d.title === `g:${x.id}`, false, '', () => { d.title = `g:${x.id}`; });
+  for (const t of PROF_TITLES) { const ok = profMeets(t.req, a); btn(g, `<span style="color:${t.color}">${esc(t.name)}</span>`, d.title === t.id, !ok, profReqText(t.req), () => { d.title = t.id; }); }
+  // icon
+  g = sect('Icon');
+  btn(g, 'None', !d.icon, false, '', () => { d.icon = ''; });
+  for (const x of grants) if (x.icon) btn(g, `<span class="pfi">${esc(x.icon)}</span><small>awarded</small>`, d.icon === `g:${x.id}`, false, '', () => { d.icon = `g:${x.id}`; });
+  for (const ic of PROF_ICONS) { const ok = profMeets(ic.req, a); btn(g, `<span class="pfi">${ic.ch}</span>`, d.icon === ic.id, !ok, profReqText(ic.req), () => { d.icon = ic.id; }); }
+  // name colour
+  g = sect('Name colour');
+  btn(g, 'Default', !d.color, false, '', () => { d.color = ''; });
+  for (const c of PROF_COLORS) { const ok = profMeets(c.req, a); btn(g, `<span style="color:${c.hex}">${c.name}</span>`, d.color === c.id, !ok, profReqText(c.req), () => { d.color = c.id; }); }
+  // owner: anything you like
+  if (owner) {
+    const h3 = document.createElement('h3'); h3.textContent = 'Owner: your own'; h3.style.margin = '16px 0 6px'; box.appendChild(h3);
+    const card = document.createElement('div'); card.className = 'pecustom';
+    card.innerHTML = `<div class="hint" style="margin:0 0 8px">Type anything. These only work for the owner account.</div>
+      <div class="pecrow"><label>Title</label><input id="pect" maxlength="20" placeholder="e.g. Creator of Aim Arena"><input id="pecc" type="color" title="Title colour"><button id="pecuse1">Use</button></div>
+      <div class="pecrow"><label>Icon</label><input id="peci" maxlength="8" placeholder="any emoji or letters"><button id="pecuse2">Use</button></div>
+      <div class="pecrow"><label>Name colour</label><input id="pecn" type="color" title="Name colour"><button id="pecuse3">Use</button></div>`;
+    box.appendChild(card);
+    $('pect').value = d.ct || ''; $('pecc').value = d.cc; $('peci').value = d.ci || ''; $('pecn').value = d.cn;
+    const live = () => { d.ct = $('pect').value; d.cc = $('pecc').value; d.ci = cleanProfIcon($('peci').value); d.cn = $('pecn').value; };
+    for (const id of ['pect', 'pecc', 'peci', 'pecn']) $(id).oninput = () => { live(); $('peprev').innerHTML = pfHtml(resolveProf(d, a, grants, owner), a.username); };
+    $('pecuse1').onclick = () => { live(); d.title = 'custom'; renderProfEditor(); };
+    $('pecuse2').onclick = () => { live(); d.icon = 'custom'; renderProfEditor(); };
+    $('pecuse3').onclick = () => { live(); d.color = 'custom'; renderProfEditor(); };
+  }
+}
+$('pesave').onclick = async () => {
+  const b = $('pesave'); b.disabled = true; $('pemsg').textContent = 'Saving...';
+  try {
+    const j = await apiPost('/api/profile', { prof: peDraft });
+    if (!j.ok) { $('pemsg').textContent = j.error || 'Could not save.'; b.disabled = false; return; }
+    account = j.profile; renderAcct(); renderProfile();
+    $('pe').classList.add('hidden');
+  } catch { $('pemsg').textContent = 'Could not reach the server.'; }
+  b.disabled = false;
+};
+$('peclose').onclick = () => $('pe').classList.add('hidden');
 
 $('profbtn').onclick = () => { renderProfile(); $('prof').classList.remove('hidden'); };
 $('profclose').onclick = () => $('prof').classList.add('hidden');
@@ -1448,7 +1533,7 @@ function handleEvent(ev, d) {
     const row = document.createElement('div');
     const a = d.byId[ev.a], v = d.byId[ev.v];
     const col = (p) => (!p ? '#fff' : inFfa ? (p.id === myId ? '#6fa3ff' : cssOf(p.tm)) : p.tm === 0 ? '#6fa3ff' : '#ff7a62');
-    row.innerHTML = `<span style="color:${col(a)}">${nameOf(ev.a)}</span> ${ev.head ? '&#127919;' : '&#10140;'} <span style="color:${col(v)}">${nameOf(ev.v)}</span>`;
+    row.innerHTML = `<span style="color:${col(a)}">${a && a.pf && a.pf[0] ? esc(a.pf[0]) + ' ' : ''}${esc(nameOf(ev.a))}</span> ${ev.head ? '&#127919;' : '&#10140;'} <span style="color:${col(v)}">${v && v.pf && v.pf[0] ? esc(v.pf[0]) + ' ' : ''}${esc(nameOf(ev.v))}</span>`;
     $('killfeed').appendChild(row);
     setTimeout(() => row.remove(), 5000);
     if (ev.a === myId) { SFX.kill(); rs.kills++; }
@@ -1510,7 +1595,7 @@ function updateRoster(d) {
   if (inFfa) {
     // leaderboard: most kills first
     const list = [...d.p].sort((a, b) => b.k - a.k || a.d - b.d);
-    html = list.map((p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.id === myId ? '#6fa3ff' : cssOf(p.tm)}">${esc(p.n)}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
+    html = list.map((p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.id === myId ? '#6fa3ff' : cssOf(p.tm)}">${p.pf ? `<span class="pfi">${esc(p.pf[0] || '')}</span>` : ''}${esc(p.n)}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
       `<b class="kc">${p.k}</b></div>`).join('');
     const top = list[0], second = list.find((p) => p.id !== myId);
     const mine = spec ? list[0] : d.byId[myId];
@@ -1519,7 +1604,7 @@ function updateRoster(d) {
     $('rd').textContent = `FREE FOR ALL · FIRST TO ${d.kt}`;
   } else {
     const mine = d.p.filter((p) => p.tm === myTeam), theirs = d.p.filter((p) => p.tm !== myTeam);
-    const row = (p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.tm === 0 ? '#6fa3ff' : '#ff7a62'}">${esc(p.n)}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
+    const row = (p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.tm === 0 ? '#6fa3ff' : '#ff7a62'}">${p.pf ? `<span class="pfi">${esc(p.pf[0] || '')}</span>` : ''}${esc(p.n)}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
       `<span class="bar"><i style="width:${pct(p)}%;background:${p.tm === myTeam ? '#4ade80' : '#ff5436'}"></i></span></div>`;
     html = mine.map(row).join('') + '<hr>' + theirs.map(row).join('');
     $('scB').textContent = d.sc[0];
@@ -1715,7 +1800,7 @@ function updatePickWindow() {
 // ------------------------------------------------------------------ scoreboard (hold Tab) and match recap
 let sbHeld = false;
 function sbRows(list, myIdv) {
-  return list.map((q) => `<tr class="${q.id === myIdv ? 'me' : ''} ${q.a ? '' : 'dead'}"><td>${esc(q.n)}${q.b ? '<span class="bot">BOT</span>' : ''}</td><td>${q.k}</td><td>${q.d}</td><td>${q.k + q.d ? (q.k / Math.max(1, q.d)).toFixed(2) : '0.00'}</td></tr>`).join('');
+  return list.map((q) => `<tr class="${q.id === myIdv ? 'me' : ''} ${q.a ? '' : 'dead'}"><td>${pfHtml(q.pf, q.n)}${q.b ? '<span class="bot">BOT</span>' : ''}</td><td>${q.k}</td><td>${q.d}</td><td>${q.k + q.d ? (q.k / Math.max(1, q.d)).toFixed(2) : '0.00'}</td></tr>`).join('');
 }
 function renderScoreboard(rt) {
   const box = $('sb');
@@ -1758,7 +1843,7 @@ function renderRecap() {
     big = `<div class="rbig"><div><b>${mine.q.k} / ${mine.q.d}</b><small>Kills / Deaths</small></div><div><b>${pct(mine.hi, mine.sh)}</b><small>Accuracy</small></div><div><b>${pct(mine.hd, mine.hi)}</b><small>Headshots</small></div><div><b>${mine.dm}</b><small>Damage</small></div><div><b>${mine.bs}</b><small>Best streak</small></div><div><b>${mine.cs}</b><small>Skills used</small></div></div>`;
   }
   const sorted = [...rows].sort((a, b) => b.q.k - a.q.k || a.q.d - b.q.d);
-  const trs = sorted.map((r) => `<tr class="${r.id === myId ? 'me' : ''}"><td>${esc(r.q.n)}${r.q.b ? '<span class="bot" style="color:var(--dim);font-size:10px;margin-left:4px">BOT</span>' : ''}${mvp && r.id === mvp.id ? '<span class="mvp">MVP</span>' : ''}</td><td>${r.q.k}</td><td>${r.q.d}</td><td>${pct(r.hi, r.sh)}</td><td>${r.dm}</td></tr>`).join('');
+  const trs = sorted.map((r) => `<tr class="${r.id === myId ? 'me' : ''}"><td>${pfHtml(r.q.pf, r.q.n)}${r.q.b ? '<span class="bot" style="color:var(--dim);font-size:10px;margin-left:4px">BOT</span>' : ''}${mvp && r.id === mvp.id ? '<span class="mvp">MVP</span>' : ''}</td><td>${r.q.k}</td><td>${r.q.d}</td><td>${pct(r.hi, r.sh)}</td><td>${r.dm}</td></tr>`).join('');
   box.innerHTML = `<h3>Match recap</h3>${big}<table><tr><th>Player</th><th>K</th><th>D</th><th>Acc</th><th>Dmg</th></tr>${trs}</table>`;
 }
 

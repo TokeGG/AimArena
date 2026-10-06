@@ -212,6 +212,7 @@ export class Room {
         bot.deaths = 0;
         bot.ms = newMs();
         bot.uid = opts.uid || null;
+        bot.pf = opts.pf || null; // [icon, title, titleColour, nameColour] the account is allowed to show
         bot.credit = CREDIT_MAX; bot.rttMs = null; bot.strikes = {}; bot.flagT = {}; bot.kicked = false; bot.aimLog = [];
         bot.rating = opts.rating || 1000;
         bot.startRating = bot.rating;
@@ -249,6 +250,7 @@ export class Room {
     if (this.onLeave) this.onLeave(this, p);
     if (this.ranked && this.onForfeit && p.uid && this.phase !== 'matchEnd' && this.winner < 0) this.onForfeit(this, p);
     p.uid = null;
+    p.pf = null;
     p.isBot = true;
     p.ws = null;
     p.name = BOT_NAMES[botNameIdx++ % BOT_NAMES.length];
@@ -927,7 +929,7 @@ export class Room {
       sc: this.scores, rd: this.round, lw: this.lastWinner, w: this.winner, mode: this.mode, ffa: this.ffa ? 1 : 0, kt: this.ffaKills, wr: this.winRounds,
       ...(this.phase === 'matchEnd' ? { rc: this.players.map((p) => ({ id: p.id, sh: p.ms.shots, hi: p.ms.hits, hd: p.ms.heads, dm: Math.round(p.ms.dmg), cs: p.ms.casts, bs: p.ms.best })) } : {}),
       p: this.players.map((p) => ({
-        id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model, lk: encodeLook(p.look),
+        ...(p.pf ? { pf: p.pf } : {}), id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model, lk: encodeLook(p.look),
         x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw), pit: r3(p.pitch),
         hp: Math.ceil(p.hp), mh: p.maxHp, a: p.alive ? 1 : 0, sh: p.shieldT > 0 ? 1 : 0,
         sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0) | (p.crouch ? 16 : 0) | (p.polyT > 0 ? 32 : 0),
