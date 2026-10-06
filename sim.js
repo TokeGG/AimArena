@@ -1,7 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.8.8'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.9.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 

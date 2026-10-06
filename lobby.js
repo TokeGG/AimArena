@@ -20,8 +20,7 @@ export class Lobby {
 
   fits(room, t) {
     if (room.mode !== t.mode || room.mapId !== t.map || room.ranked !== t.ranked) return false;
-    if ((room.botLevel || 'normal') !== (t.bots || 'normal')) return false; // players who picked different bot levels don't share a room
-    if (room.emptyT > 10) return false;
+    if (room.emptyT > 10 || room.private) return false;
     const open = room.openSlots();
     if (t.team === 0 || t.team === 1) { if (open[t.team] < 1) return false; } else if (open[0] + open[1] < 1) return false;
     if (t.ranked) {
@@ -42,7 +41,8 @@ export class Lobby {
       if (!this.fits(r, t)) continue;
       const humans = r.humans().length;
       if (t.ranked && humans === 0) continue; // an all-bot ranked room is no better than a fresh one
-      const score = humans * 10 + (r.phase === 'matchEnd' ? 0 : 1);
+      // fill rooms that already have players first (their open bot slots go to the newcomer); same bot level breaks ties
+      const score = humans * 10 + (r.phase === 'matchEnd' ? 0 : 1) + ((r.botLevel || 'normal') === (t.bots || 'normal') ? 0.5 : 0);
       if (score > bs) { bs = score; best = r; }
     }
     return best;

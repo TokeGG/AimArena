@@ -367,6 +367,34 @@
   #acct { margin-bottom:8px; }
   #persist { margin:0 0 8px; }
   @media (max-width:700px) { .tiles { grid-template-columns:1fr; } .hub { grid-template-columns:repeat(3,1fr); } }
+
+  #hsprev { display:flex; align-items:center; justify-content:center; gap:14px; flex-wrap:wrap; padding:10px; background:rgba(0,0,0,.4); border-radius:10px; margin-bottom:8px; }
+  #hsprev canvas { position:static; inset:auto; width:170px; height:48px; }
+  #praclist select, #hslist select { padding:6px 8px; border-radius:8px; background:#241a0e; color:#f1e8d2; border:1px solid rgba(226,184,74,.35); font:inherit; }
+  #hsprev .hsn { display:flex; gap:16px; font-weight:800; align-items:center; } #hsprev .hsn span { text-shadow:0 2px 4px #000; }
+  #hslist h3 { color:var(--gold); }
+  /* SCOREBOARD (hold Tab) + MATCH RECAP */
+  #sb { position:absolute; left:50%; top:12%; transform:translateX(-50%); width:min(760px,94vw); background:rgba(14,10,5,.9); border:1px solid rgba(226,184,74,.35); border-radius:14px; padding:12px 14px 14px; z-index:12; box-shadow:0 12px 40px rgba(0,0,0,.6); }
+  #sb.hidden { display:none; }
+  .sbhead { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; font-family:Georgia,serif; letter-spacing:.12em; color:var(--gold); }
+  .sbhead small { color:var(--dim); letter-spacing:.04em; font-family:system-ui,sans-serif; }
+  .sbteams { display:grid; gap:12px; grid-template-columns:1fr 1fr; }
+  .sbteams.one { grid-template-columns:1fr; }
+  .sbt h4 { margin:0 0 4px; font-size:12px; letter-spacing:.18em; padding:3px 8px; border-radius:6px; }
+  .sbt.t0 h4 { background:rgba(70,140,255,.25); color:#8fc0ff; } .sbt.t1 h4 { background:rgba(255,90,70,.25); color:#ff9a85; } .sbt.tf h4 { background:rgba(226,184,74,.2); color:var(--gold); }
+  .sbt table, .rcard table { width:100%; border-collapse:collapse; font-size:13px; }
+  .sbt th, .rcard th { text-align:right; color:var(--dim); font-weight:600; font-size:11px; letter-spacing:.08em; padding:2px 6px; }
+  .sbt th:first-child, .rcard th:first-child, .sbt td:first-child, .rcard td:first-child { text-align:left; }
+  .sbt td, .rcard td { text-align:right; padding:4px 6px; border-top:1px solid rgba(255,255,255,.06); font-variant-numeric:tabular-nums; }
+  .sbt tr.me td, .rcard tr.me td { background:rgba(226,184,74,.14); color:#fff; font-weight:700; }
+  .sbt tr.dead td:first-child { opacity:.5; text-decoration:line-through; }
+  .sbt .bot { font-size:10px; color:var(--dim); margin-left:4px; }
+  .rcard { margin:12px 0 4px; padding:12px 14px; background:rgba(255,255,255,.04); border:1px solid rgba(226,184,74,.25); border-radius:12px; }
+  .rcard h3 { margin:0 0 8px; }
+  .rbig { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:10px; }
+  .rbig div { background:rgba(0,0,0,.35); border-radius:10px; padding:8px 10px; text-align:center; }
+  .rbig b { display:block; font-size:22px; color:#fff; } .rbig small { color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; }
+  .rcard .mvp { color:var(--gold); font-weight:800; font-size:10px; margin-left:6px; letter-spacing:.1em; }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
@@ -384,6 +412,7 @@
   <div id="roster"></div>
   <div id="rangestats"></div>
   <div id="killfeed"></div>
+  <div id="sb" class="hidden"></div>
   <div id="dmgnums"></div>
   <div id="dmgdir"></div>
   <div id="banner"></div>
@@ -465,7 +494,7 @@
         <div><div class="hint" style="margin:0 0 4px">Sensitivity <span id="sensv"></span></div><input id="sens" type="range" min="0.2" max="3" step="0.05"></div>
         <div><div class="hint" style="margin:0 0 4px">Volume <span id="volv"></span></div><input id="vol" type="range" min="0" max="1" step="0.05"></div>
       </div>
-      <div class="row" style="margin-top:12px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
+      <div class="row" style="margin-top:12px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button><button id="hsbtn">&#10084; Numbers &amp; bars</button></div>
       <div class="keys">Default keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Shift</kbd> crouch &nbsp; <kbd>Click</kbd> shoot &nbsp; <kbd>Q</kbd> <kbd>E</kbd> <kbd>R</kbd> skills (press, then shoot) &nbsp; <kbd>Esc</kbd> menu.</div>
       <button class="playbtn subdone" data-close style="width:100%;margin-top:14px;font-size:16px">DONE</button>
     </div>
@@ -555,6 +584,26 @@
   </div>
 </div>
 
+<div id="hs" class="modal hidden">
+  <div class="card" style="width:min(560px,96vw)">
+    <h2>Damage numbers &amp; health bars</h2>
+    <div id="hsprev"><canvas id="hsplate" width="256" height="72"></canvas><canvas id="hsplate2" width="256" height="72"></canvas><div class="hsn"><span id="hsnum">47</span><span id="hsnumh">94</span></div></div>
+    <div id="hslist"></div>
+    <div class="row" style="margin-top:14px"><button id="hsreset">Reset to default</button><button id="hsclose" class="playbtn" style="font-size:15px">DONE</button></div>
+  </div>
+</div>
+
+<div id="prac" class="modal hidden">
+  <div class="card" style="width:min(520px,96vw)">
+    <h2>Practice</h2>
+    <button id="pracrange" class="primary" style="width:100%;text-align:left;padding:12px 14px">AIM RANGE <small style="display:block;opacity:.75;font-weight:400">Solo target practice. Moving dummies, infinite ammo.</small></button>
+    <h3 style="margin:16px 0 4px">Custom match</h3>
+    <div class="hint" style="margin:0 0 6px">A private match against bots with your own rules. Nothing counts toward rank, stats or challenges.</div>
+    <div id="praclist"></div>
+    <div class="row" style="margin-top:14px"><button id="pracclose">Back</button><button id="pracstart" class="playbtn" style="font-size:15px">START CUSTOM MATCH</button></div>
+  </div>
+</div>
+
 <div id="search" class="modal hidden">
   <div class="card" style="text-align:center">
     <h2>Finding a ranked match</h2>
@@ -570,6 +619,7 @@
   <div class="wrap">
     <div class="head"><div><h2>NEXT MATCH</h2><div id="ratingline"></div><div id="xpline"></div></div><div><div class="hint" style="text-align:right;margin:0">starts in</div><div id="pickcount">15</div></div></div>
     <div class="row" id="endbtns" style="margin:10px 0 4px"><button id="playagain" class="primary">PLAY AGAIN</button><button id="endleave">LEAVE</button><button id="endreport">REPORT</button><span id="rvnote" class="hint" style="margin:0 0 0 8px"></span></div>
+    <div class="rcard" id="recap"></div>
     <h3>Skills</h3>
     <div class="slots" id="pslots"></div>
     <div class="spells" id="pspellpick" style="margin-top:10px"></div>
@@ -584,6 +634,7 @@
     <div class="pstack">
       <button id="resume" class="primary">RESUME</button>
       <div class="pgrid"><button id="controlsbtn2">&#9000; Keybinds</button><button id="xhbtn2">&#10010; Crosshair</button></div>
+      <button id="hsbtn2">&#10084; Damage numbers &amp; health bars</button>
       <button id="reportbtn">&#9873; Report a player</button>
       <button id="leave" class="danger">Leave match</button>
     </div>

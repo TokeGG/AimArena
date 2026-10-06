@@ -12,6 +12,12 @@ export const RANGE_PLAYERS = 6; // you + 5 dummies
 export const FFA_PLAYERS = 8;   // free-for-all: humans + bots
 export const FFA_KILLS = 20;     // first to this many kills wins
 export const FFA_TIME = 300;     // or the best score after 5 minutes
+/** Custom practice-match settings, clamped. rounds = rounds to win, time = seconds per round (FFA: whole match), kills = FFA target. */
+export function cleanCustom(c) {
+  const n = (v, lo, hi, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.max(lo, Math.min(hi, Math.round(Number(v)))) : d);
+  c = c && typeof c === 'object' ? c : {};
+  return { rounds: n(c.rounds, 1, 7, WIN_ROUNDS), time: n(c.time, 30, 600, ROUND_TIME), kills: n(c.kills, 3, 60, FFA_KILLS), skills: c.skills !== false, hs: c.hs === true, inf: c.inf === true };
+}
 const RESPAWN_TIME = 3, SPAWN_PROTECT = 1.5;
 export const MAX_REWIND = 24; // ticks (400 ms at 60 Hz): the most a shot can be rewound
 
@@ -100,6 +106,8 @@ export const BOT_LEVELS = { easy: [0.2, 0.4], normal: [0.55, 0.85], hard: [0.86,
 export const BOT_LEVEL_IDS = Object.keys(BOT_LEVELS);
 const botSkill = (level) => { const r = BOT_LEVELS[level] || BOT_LEVELS.normal; return rand(r[0], r[1]); };
 
+const newMs = () => ({ shots: 0, hits: 0, heads: 0, dmg: 0, casts: 0, streak: 0, best: 0 }); // per-match recap numbers
+
 function makePlayer(team, slot, isBot, name, level = 'normal') {
   const p = {
     id: nextId++, team, slot, isBot, ws: null, name,
@@ -111,7 +119,7 @@ function makePlayer(team, slot, isBot, name, level = 'normal') {
     lastSeq: 0, lastQueued: 0, queue: [], lastInput: NEUTRAL(),
     kills: 0, deaths: 0, lastHurt: -99, respawnT: 0, invulnT: 0,
     hist: [], // recent positions {n,x,y,z} for lag compensation
-    ai: newAI(), skill: botSkill(level),
+    ai: newAI(), skill: botSkill(level), ms: newMs(),
   };
   clearStatuses(p);
   if (isBot) { p.look = randomLook(); applyModel(p, p.look.model); }
@@ -132,6 +140,16 @@ export class Room {
     this.onFlag = opts.onFlag || null;         // (room, player, kind, detail, 'flag'|'kick') suspicious client behaviour
     this.onForfeit = opts.onForfeit || null;   // (room, player) when a human leaves a ranked match early
     this.ffa = mode === 'ffa';
+    this.private = !!opts.private; // custom practice match: solo room, never matched into by Quick Play, no stats
+    this.custom = opts.custom ? cleanCustom(opts.custom) : null;
+    if (this.custom) this.noStats = true;
+    this.winRounds = this.custom ? this.custom.rounds : WIN_ROUNDS;
+    this.roundTime = this.custom ? this.custom.time : ROUND_TIME;
+    this.ffaTime = this.custom ? this.custom.time : FFA_TIME;
+    this.ffaKills = this.custom ? this.custom.kills : FFA_KILLS;
+    this.skillsOn = !this.custom || this.custom.skills;
+    this.infAmmo = !!(opts.range || (this.custom && this.custom.inf));
+    this.hsOnly = !!(this.custom && this.custom.hs);
     this.range = !!opts.range; // solo practice: harmless moving dummies, infinite ammo, never ends
     this.size = this.range ? RANGE_PLAYERS : this.ffa ? FFA_PLAYERS : mode;
     this.players = [];
@@ -139,7 +157,7 @@ export class Room {
     this.decoys = [];
     this.phase = 'countdown';
     this.phaseT = 5;
-    this.roundT = ROUND_TIME;
+    this.roundT = this.ffa ? this.ffaTime : this.roundTime;
     this.scores = [0, 0];
     this.round = 1;
     this.lastWinner = -1;
@@ -192,6 +210,7 @@ export class Room {
         bot.cd = [0, 0, 0];
         bot.kills = 0;
         bot.deaths = 0;
+        bot.ms = newMs();
         bot.uid = opts.uid || null;
         bot.credit = CREDIT_MAX; bot.rttMs = null; bot.strikes = {}; bot.flagT = {}; bot.kicked = false; bot.aimLog = [];
         bot.rating = opts.rating || 1000;
@@ -318,14 +337,14 @@ export class Room {
     }
     this.zones = [];
     this.decoys = [];
-    this.roundT = this.ffa ? FFA_TIME : ROUND_TIME;
+    this.roundT = this.ffa ? this.ffaTime : this.roundTime;
   }
 
   endRound(w) {
     if (w >= 0) this.scores[w]++;
     this.lastWinner = w;
     this.events.push({ k: 'round', w });
-    if (w >= 0 && this.scores[w] >= WIN_ROUNDS) {
+    if (w >= 0 && this.scores[w] >= this.winRounds) {
       this.phase = 'matchEnd';
       this.phaseT = MATCH_END_TIME;
       this.winner = w;
@@ -404,7 +423,7 @@ export class Room {
           this.winner = -1;
           this.lastWinner = -1;
           for (const p of this.players) {
-            p.kills = 0; p.deaths = 0; p.rematch = false;
+            p.kills = 0; p.deaths = 0; p.rematch = false; p.ms = newMs();
             if (p.nextLoadout) { p.loadout = p.nextLoadout; p.nextLoadout = null; }
             if (p.isBot) { p.look = randomLook(); applyModel(p, p.look.model); p.loadout = randomLoadout(); }
             if (!p.isBot) p.startRating = p.rating; // ratings may have changed at the end of the last match
@@ -465,7 +484,7 @@ export class Room {
       if (this.ffa) {
         let top = 0;
         for (const p of this.players) top = Math.max(top, p.kills);
-        if (!this.range && (top >= FFA_KILLS || this.roundT <= 0)) this.endFfa();
+        if (!this.range && (top >= this.ffaKills || this.roundT <= 0)) this.endFfa();
       } else {
         const alive = [0, 0];
         const hp = [0, 0];
@@ -507,7 +526,7 @@ export class Room {
     }
     // skill keys first, so a key and a click that arrive together act in the order the player meant
     for (let s = 0; s < SLOT_COUNT; s++) {
-      if (!inp[SLOT_FLAG[s]]) continue;
+      if (!inp[SLOT_FLAG[s]] || !this.skillsOn) continue;
       const sp = SPELLS[p.loadout[s]];
       if (sp && sp.aim && !p.isBot) { // aimed skill: the key arms it (press again to put it away), the next shot fires it
         if (p.armed === s) p.armed = -1;
@@ -517,7 +536,7 @@ export class Room {
     // small tolerance: semi-auto clients send one shot per click, so a packet landing a tick early must not be dropped
     if (inp.shoot && p.fireCd <= FIRE_TOLERANCE) {
       if (p.armed >= 0) this.fireArmed(p, inp);
-      else if (p.ammo > 0 || this.range) this.shoot(p, inp);
+      else if (p.ammo > 0 || this.infAmmo) this.shoot(p, inp);
     }
   }
 
@@ -635,9 +654,11 @@ export class Room {
     victim.alive = false; victim.armed = -1;
     victim.deaths++;
     victim.sDeaths++;
+    victim.ms.streak = 0;
     victim.respawnT = RESPAWN_TIME;
     if (attacker !== victim) {
       attacker.kills++;
+      if (attacker.team !== victim.team) { attacker.ms.streak++; attacker.ms.best = Math.max(attacker.ms.best, attacker.ms.streak); }
       if (attacker.team !== victim.team && !victim.isBot) attacker.sKills++; // bot kills are worth no stats/XP
       if (attacker.team !== victim.team && !attacker.isBot && !victim.isBot && attacker.uid && victim.uid && this.onRivalKill && !this.noStats) this.onRivalKill(this, attacker, victim);
       if (attacker.team !== victim.team) attacker.ammo = Math.min(AMMO_MAX, attacker.ammo + AMMO_KILL); // a kill refills your ammo
@@ -648,7 +669,7 @@ export class Room {
   // -------------------------------------------------------------- combat
   shoot(p, inp) {
     p.fireCd = FIRE_INTERVAL;
-    if (!this.range) p.ammo--;
+    if (!this.infAmmo) p.ammo--;
     const bindShot = p.bindBuffT > 0; // Bind: this shot roots whoever it hits (used up even on a miss)
     p.bindBuffT = 0;
     const over = p.overT > 0; // Overcharge: this shot deals double damage (used up even on a miss)
@@ -657,6 +678,8 @@ export class Room {
     const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
     const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, RANGE), RANGE);
     const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt);
+    p.ms.shots++;
+    if (best && !best.decoy) { p.ms.hits++; if (best.head) p.ms.heads++; }
     if (!p.isBot) this.aimStat(p, best && !best.decoy ? best : null);
     let t = best ? best.t : tWall;
     if (!best && dy < 0) t = Math.min(t, -oy / dy); // floor
@@ -674,7 +697,7 @@ export class Room {
         v.vx = 0; v.vz = 0; v.dashT = 0; v.dvx = 0; v.dvz = 0;
         this.events.push({ k: 'bound', v: v.id });
       }
-      this.damage(best.who, (best.head ? HEAD_DMG : BODY_DMG) * (over ? OVER_MULT : 1), p, best.head, over ? 'oc' : bindShot ? 'bd' : p.bleedBuffT > 0 ? 'bl' : '');
+      this.damage(best.who, this.hsOnly && !best.head ? 0 : (best.head ? HEAD_DMG : BODY_DMG) * (over ? OVER_MULT : 1), p, best.head, over ? 'oc' : bindShot ? 'bd' : p.bleedBuffT > 0 ? 'bl' : '');
       this.onRifleHit(p, best.who);
     }
   }
@@ -728,6 +751,7 @@ export class Room {
       attacker.dDmg += Math.max(0, Math.min(amount, victim.hp));
       if (head) attacker.dHeads++;
     }
+    if (attacker !== victim && attacker.team !== victim.team) attacker.ms.dmg += Math.max(0, Math.min(amount, victim.hp));
     victim.hp -= amount;
     victim.lastHurt = this.time;
     if (attacker !== victim) { victim.lastAtkId = attacker.id; victim.lastAtkT = this.time; }
@@ -742,6 +766,7 @@ export class Room {
     if (!spell) return;
     p.cd[slot] = spell.cd;
     p.dCasts++;
+    p.ms.casts++;
     const ev = { k: 'spell', id: p.id, s: id, x: r2(p.x), y: r2(p.y), z: r2(p.z) };
     const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
     const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
@@ -899,7 +924,8 @@ export class Room {
     return {
       t: 's', n: this.tick, ph: this.phase, pt: r2(this.phaseT), rt: Math.round(this.roundT * 10) / 10,
       rv: this.phase === 'matchEnd' ? this.humans().filter((h) => h.rematch).length : 0, rh: this.humans().length,
-      sc: this.scores, rd: this.round, lw: this.lastWinner, w: this.winner, mode: this.mode, ffa: this.ffa ? 1 : 0, kt: FFA_KILLS,
+      sc: this.scores, rd: this.round, lw: this.lastWinner, w: this.winner, mode: this.mode, ffa: this.ffa ? 1 : 0, kt: this.ffaKills, wr: this.winRounds,
+      ...(this.phase === 'matchEnd' ? { rc: this.players.map((p) => ({ id: p.id, sh: p.ms.shots, hi: p.ms.hits, hd: p.ms.heads, dm: Math.round(p.ms.dmg), cs: p.ms.casts, bs: p.ms.best })) } : {}),
       p: this.players.map((p) => ({
         id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model, lk: encodeLook(p.look),
         x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw), pit: r3(p.pitch),
@@ -971,7 +997,7 @@ export class Room {
 
   meFor(p) {
     return {
-      id: p.id, ack: p.lastSeq, ar: p.armed, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), am: this.range ? 99 : p.ammo, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
+      id: p.id, ack: p.lastSeq, ar: p.armed, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), am: this.infAmmo ? 99 : p.ammo, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
       st: {
         x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, dvx: p.dvx, dvz: p.dvz, dashT: p.dashT,
         rootT: p.rootT, slowT: p.slowT,

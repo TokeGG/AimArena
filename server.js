@@ -104,7 +104,7 @@ async function handleAdmin(req, res, route) {
 async function handleApi(req, res, route) {
   try {
     if (route === '/api/games' && req.method === 'GET') {
-      const games = rooms.filter((r) => r.humans().length > 0 && !r.range).map((r) => ({
+      const games = rooms.filter((r) => r.humans().length > 0 && !r.range && !r.private).map((r) => ({
         id: r.rid, mode: r.mode, map: r.mapId, mapName: MAPS[r.mapId].name, ranked: !!r.ranked, ph: r.phase, rd: r.round, sc: r.scores,
         humans: r.humans().map((p) => p.name), size: r.players.length, watching: r.specs.size,
       })).sort((a, b) => b.humans.length - a.humans.length);
@@ -322,11 +322,18 @@ async function handleJoin(ws, m) {
       ws.player = p; ws.room = room; ws.ticket = null;
       send(ws, {
         t: 'welcome', id: p.id, team: p.team, mode, map, ranked, loadout: p.loadout, model: p.model, look: p.look, name,
-        rating: user ? rating : null, rank: user ? rankFor(rating) : null, range: !!room.range, level, xp: user ? user.xp || 0 : 0,
+        rating: user ? rating : null, rank: user ? rankFor(rating) : null, range: !!room.range, custom: room.custom || null, level, xp: user ? user.xp || 0 : 0,
       });
       return true;
     },
   };
+  if (m.queue === 'custom' && !isRange) { // custom practice match: a private room with your own rules, bots fill every other slot, nothing counts
+    const room = new Room(mode, map, { private: true, custom: m.custom, bots, onFlag });
+    room.rid = nextRid++;
+    lobby.rooms.push(room);
+    ticket.place(room);
+    return;
+  }
   if (isRange) { // a private room for this player only (never matched with anyone else, not listed, no stats)
     const room = new Room('ffa', 'range', { range: true, onFlag });
     room.rid = nextRid++;
@@ -391,7 +398,7 @@ attachWebSocket(server, (ws, req) => {
       handleReport(ws, m);
     } else if (m.t === 'spectate') {
       if (ws.player || ws.ticket || ws.specRoom) return;
-      const room = rooms.find((r) => r.rid === m.room && !r.range);
+      const room = rooms.find((r) => r.rid === m.room && !r.range && !r.private);
       if (!room || room.specs.size >= 20) { send(ws, { t: 'error', msg: 'That game is no longer available.' }); return; }
       room.specs.add(ws); ws.specRoom = room;
       send(ws, { t: 'welcome', spec: true, id: -1, team: 0, mode: room.mode, map: room.mapId, ranked: !!room.ranked, loadout: [], name: 'Spectator' });

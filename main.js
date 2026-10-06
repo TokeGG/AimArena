@@ -7,7 +7,7 @@ import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, placeShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.8.8';
+const CLIENT_VERSION = '0.9.0';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -298,6 +298,131 @@ $('xhbtn2').onclick = openXh;
 $('xhclose').onclick = () => $('xh').classList.add('hidden');
 $('xhreset').onclick = () => { Object.assign(xh, DEFAULT_XH); store.set('xhair', xh); renderXhList(); applyCrosshair(); };
 applyCrosshair();
+
+
+// ------------------------------------------------------------------ HUD style: damage numbers, overhead health bars, your own health bar
+const DEFAULT_HS = {
+  dOn: true, dSize: 20, dHead: 28, dColor: '#ffffff', dHeadColor: '#ffd54a', dOutline: true, dStyle: 'rise', dTime: 800,
+  bOn: true, bScale: 1, bName: true, bNum: false, bMode: 'team', bAlly: '#4ade80', bEnemy: '#ff5436', bOpacity: 1, bThick: 12,
+  mScale: 1, mMode: 'health', mColor: '#4ade80', mNum: true,
+};
+const hs = { ...DEFAULT_HS };
+let hsVer = 0; // bumps whenever the style changes so cached name plates are redrawn
+{
+  const saved = store.get('hudstyle', {});
+  const isCol = (c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+  if (saved && typeof saved === 'object') {
+    for (const k of Object.keys(DEFAULT_HS)) {
+      const d = DEFAULT_HS[k], v = saved[k];
+      if (typeof d === 'boolean' && typeof v === 'boolean') hs[k] = v;
+      else if (typeof d === 'number' && Number.isFinite(v)) hs[k] = v;
+      else if (typeof d === 'string' && /color|ally|enemy|dColor|dHeadColor|mColor/i.test(k) && isCol(v)) hs[k] = v;
+    }
+    if (['rise', 'pop', 'still'].includes(saved.dStyle)) hs.dStyle = saved.dStyle;
+    if (['team', 'health', 'custom'].includes(saved.bMode)) hs.bMode = saved.bMode;
+    if (['health', 'solid'].includes(saved.mMode)) hs.mMode = saved.mMode;
+    hs.dSize = clamp(hs.dSize, 12, 44); hs.dHead = clamp(hs.dHead, 12, 56); hs.dTime = clamp(hs.dTime, 300, 2000);
+    hs.bScale = clamp(hs.bScale, 0.5, 1.8); hs.bOpacity = clamp(hs.bOpacity, 0.2, 1); hs.bThick = clamp(hs.bThick, 6, 20); hs.mScale = clamp(hs.mScale, 0.6, 1.5);
+  }
+}
+function plateColor(ally, frac) {
+  if (hs.bMode === 'health') return frac > 0.5 ? '#4ade80' : frac > 0.25 ? '#facc15' : '#f87171';
+  if (hs.bMode === 'custom') return ally ? hs.bAlly : hs.bEnemy;
+  return ally ? '#4ade80' : '#ff5436';
+}
+/** Paint a name plate (name + health bar) onto a 256x72 canvas. Used by every player plate and by the style preview. */
+function paintPlate(cv, name, hp, mh, ally) {
+  const g = cv.getContext('2d');
+  const frac = clamp(hp / (mh || 100), 0, 1), th = Math.round(hs.bThick);
+  g.clearRect(0, 0, 256, 72);
+  g.globalAlpha = hs.bOpacity;
+  g.textAlign = 'center';
+  const barY = hs.bName ? 40 : 28;
+  if (hs.bName) {
+    g.font = 'bold 30px system-ui, sans-serif';
+    g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,.8)';
+    g.fillStyle = ally ? '#4ade80' : '#ff7a62';
+    g.strokeText(name, 128, 30); g.fillText(name, 128, 30);
+  }
+  g.fillStyle = 'rgba(0,0,0,.75)'; g.fillRect(28, barY, 200, th + 4);
+  g.fillStyle = plateColor(ally, frac);
+  g.fillRect(30, barY + 2, 196 * frac, th);
+  if (hs.bNum) {
+    g.font = `bold ${Math.max(10, th)}px system-ui, sans-serif`;
+    g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,.85)'; g.fillStyle = '#fff';
+    g.strokeText(String(Math.ceil(hp)), 128, barY + th); g.fillText(String(Math.ceil(hp)), 128, barY + th);
+  }
+  g.globalAlpha = 1;
+}
+function applyHudStyle() {
+  hsVer++;
+  const bl = $('bl');
+  bl.style.transform = `scale(${hs.mScale})`; bl.style.transformOrigin = 'left bottom';
+  $('hpval').style.display = hs.mNum ? '' : 'none';
+  $('hpfill').dataset.mode = hs.mMode;
+  if (!$('hs').classList.contains('hidden')) renderHsPreview();
+}
+function renderHsPreview() {
+  const cv = $('hsplate'); cv.width = 256; cv.height = 72;
+  paintPlate(cv, 'Enemy', 70, 100, false);
+  const cv2 = $('hsplate2'); cv2.width = 256; cv2.height = 72;
+  paintPlate(cv2, 'Teammate', 40, 100, true);
+  const n = $('hsnum'), nh = $('hsnumh');
+  for (const [el, head] of [[n, false], [nh, true]]) {
+    el.style.fontSize = `${head ? hs.dHead : hs.dSize}px`;
+    el.style.color = head ? hs.dHeadColor : hs.dColor;
+    el.style.textShadow = hs.dOutline ? '0 2px 4px #000, 0 0 6px #000' : 'none';
+    el.style.opacity = hs.dOn ? '1' : '0.25';
+  }
+}
+function renderHsList() {
+  const box = $('hslist'); box.innerHTML = '';
+  const save = () => { store.set('hudstyle', hs); applyHudStyle(); };
+  const row = (label, control) => { const r = document.createElement('div'); r.className = 'bindrow'; const l = document.createElement('span'); l.textContent = label; r.append(l, control); box.appendChild(r); };
+  const head = (t) => { const h = document.createElement('h3'); h.textContent = t; h.style.margin = '14px 0 4px'; box.appendChild(h); };
+  const seg = (opts, key) => {
+    const d = document.createElement('div'); d.className = 'seg';
+    for (const [v, text] of opts) { const b = document.createElement('button'); b.textContent = text; b.className = hs[key] === v ? 'on' : ''; b.onclick = () => { hs[key] = v; save(); renderHsList(); }; d.appendChild(b); }
+    return d;
+  };
+  const slider = (key, min, max, step) => { const i = document.createElement('input'); i.type = 'range'; i.min = min; i.max = max; i.step = step; i.value = hs[key]; i.oninput = () => { hs[key] = Number(i.value); save(); }; return i; };
+  const colour = (key) => {
+    const sw = document.createElement('div'); sw.className = 'swatches';
+    for (const c of XH_COLORS) { const b = document.createElement('button'); b.style.background = c; b.className = hs[key].toLowerCase() === c ? 'on' : ''; b.onclick = () => { hs[key] = c; save(); renderHsList(); }; sw.appendChild(b); }
+    const pick = document.createElement('input'); pick.type = 'color'; pick.value = hs[key]; pick.oninput = () => { hs[key] = pick.value; save(); };
+    sw.appendChild(pick); return sw;
+  };
+  const onoff = (key) => seg([[true, 'On'], [false, 'Off']], key);
+  head('Damage numbers');
+  row('Show', onoff('dOn'));
+  row('Size', slider('dSize', 12, 44, 1));
+  row('Headshot size', slider('dHead', 12, 56, 1));
+  row('Colour', colour('dColor'));
+  row('Headshot colour', colour('dHeadColor'));
+  row('Outline', onoff('dOutline'));
+  row('Motion', seg([['rise', 'Rise'], ['pop', 'Pop'], ['still', 'Still']], 'dStyle'));
+  row('Lasts', slider('dTime', 300, 2000, 50));
+  head('Health bars above players');
+  row('Show', onoff('bOn'));
+  row('Size', slider('bScale', 0.5, 1.8, 0.05));
+  row('Bar thickness', slider('bThick', 6, 20, 1));
+  row('Opacity', slider('bOpacity', 0.2, 1, 0.05));
+  row('Names', onoff('bName'));
+  row('Health number', onoff('bNum'));
+  row('Bar colour', seg([['team', 'Team'], ['health', 'By health'], ['custom', 'Custom']], 'bMode'));
+  if (hs.bMode === 'custom') { row('Teammate colour', colour('bAlly')); row('Enemy colour', colour('bEnemy')); }
+  head('Your health bar');
+  row('Size', slider('mScale', 0.6, 1.5, 0.05));
+  row('Number', onoff('mNum'));
+  row('Bar colour', seg([['health', 'By health'], ['solid', 'Solid']], 'mMode'));
+  if (hs.mMode === 'solid') row('Colour', colour('mColor'));
+}
+const openHs = () => { renderHsList(); $('hs').classList.remove('hidden'); renderHsPreview(); };
+$('hsbtn').onclick = openHs;
+$('hsbtn2').onclick = openHs;
+$('hsclose').onclick = () => $('hs').classList.add('hidden');
+$('hsreset').onclick = () => { Object.assign(hs, DEFAULT_HS); store.set('hudstyle', hs); renderHsList(); applyHudStyle(); };
+applyHudStyle();
 
 // ------------------------------------------------------------------ account
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -761,19 +886,10 @@ function setPreview(look) {
 }
 
 function drawTag(ent, pd, ally) {
-  const key = `${pd.n}|${pd.hp}|${pd.mh}|${ally}`;
+  const key = `${pd.n}|${pd.hp}|${pd.mh}|${ally}|${hsVer}`;
   if (key === ent.key) return;
   ent.key = key;
-  const g = ent.cv.getContext('2d');
-  g.clearRect(0, 0, 256, 72);
-  g.font = 'bold 30px system-ui, sans-serif';
-  g.textAlign = 'center';
-  g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,.8)';
-  g.fillStyle = ally ? '#4ade80' : '#ff7a62';
-  g.strokeText(pd.n, 128, 30); g.fillText(pd.n, 128, 30);
-  g.fillStyle = 'rgba(0,0,0,.75)'; g.fillRect(28, 42, 200, 16);
-  g.fillStyle = ally ? '#4ade80' : '#ff5436';
-  g.fillRect(30, 44, 196 * clamp(pd.hp / (pd.mh || 100), 0, 1), 12);
+  paintPlate(ent.cv, pd.n, pd.hp, pd.mh, ally);
   ent.tex.needsUpdate = true;
 }
 
@@ -972,9 +1088,13 @@ function ring(x, y, z, color, maxR, dur, vertical = false) {
 // Floating damage numbers (DOM, projected each frame) and the red damage-direction arc.
 const floaters = [];
 function addFloater(x, y, z, dmg, head) {
+  if (!hs.dOn) return;
   const el = document.createElement('div');
   el.className = 'dmgnum' + (head ? ' head' : '');
   el.textContent = String(dmg);
+  el.style.fontSize = `${head ? hs.dHead : hs.dSize}px`;
+  el.style.color = head ? hs.dHeadColor : hs.dColor;
+  if (!hs.dOutline) el.style.textShadow = 'none';
   $('dmgnums').appendChild(el);
   floaters.push({ el, x: x + (Math.random() - 0.5) * 0.5, y, z, t0: performance.now() });
   if (floaters.length > 24) floaters.shift().el.remove();
@@ -983,14 +1103,15 @@ const _fv = new THREE.Vector3();
 function updateFloaters(now) {
   const W = window.innerWidth, H = window.innerHeight;
   for (let i = floaters.length - 1; i >= 0; i--) {
-    const f = floaters[i], age = (now - f.t0) / 800;
+    const f = floaters[i], age = (now - f.t0) / hs.dTime;
     if (age >= 1) { f.el.remove(); floaters.splice(i, 1); continue; }
-    _fv.set(f.x, f.y + age * 0.8, f.z).project(camera);
+    _fv.set(f.x, f.y + (hs.dStyle === 'still' ? 0 : age * (hs.dStyle === 'pop' ? 0.4 : 0.8)), f.z).project(camera);
     if (_fv.z > 1) { f.el.style.display = 'none'; continue; }
     f.el.style.display = '';
     f.el.style.left = `${(_fv.x * 0.5 + 0.5) * W}px`;
     f.el.style.top = `${(-_fv.y * 0.5 + 0.5) * H}px`;
     f.el.style.opacity = String(1 - age * age);
+    f.el.style.transform = hs.dStyle === 'pop' ? `translate(-50%,-50%) scale(${(1 + 0.7 * Math.max(0, 1 - age * 5)).toFixed(2)})` : 'translate(-50%,-50%)';
   }
 }
 let dmgDirT = 0;
@@ -1007,7 +1128,7 @@ function showDamageDir(ax, az) {
 let ws = null;
 let playing = false, locked = false;
 let myId = -1, myTeam = 0;
-let inRange = false;
+let inRange = false, infAmmo = false;
 let rs = { shots: 0, hits: 0, heads: 0, kills: 0 }; // practice range stats
 let spec = false, specId = -1; // spectator mode: watching a live game without a player
 let yaw = 0, pitch = 0;
@@ -1046,7 +1167,9 @@ let ranked = false, meModel = cfg.look.model, ratingMsg = '', myRating = null;
 function connect(queue) {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
   ws.onopen = () => {
-    ws.send(JSON.stringify({ t: 'join', name: cfg.name, mode: queue === 'range' ? 'range' : cfg.mode, map: chosenMap(), queue, team: cfg.team, bots: cfg.bots, loadout: cfg.loadout, model: cfg.look.model, look: effLook(), token }));
+    const cu = queue === 'custom' ? cust : null;
+    ws.send(JSON.stringify({ t: 'join', name: cfg.name, mode: queue === 'range' ? 'range' : cu ? cu.mode : cfg.mode, map: cu ? cu.map : chosenMap(), queue, team: cfg.team, bots: cu ? cu.bots : cfg.bots,
+      custom: cu ? { rounds: cu.rounds, time: cu.mode === 'ffa' ? cu.ffaTime : cu.time, kills: cu.kills, skills: cu.skills, hs: cu.hs, inf: cu.inf } : undefined, loadout: cfg.loadout, model: cfg.look.model, look: effLook(), token }));
     setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'ping', ts: performance.now() })); }, 2000);
   };
   ws.onmessage = wsHandler;
@@ -1083,6 +1206,8 @@ function wsHandler(e) {
     } else if (m.t === 'welcome') {
       myId = m.id; myTeam = m.team; meLoadout = m.loadout; playing = true;
       inFfa = m.mode === 'ffa'; inRange = !!m.range; yawInit = false; showroom.visible = false;
+      infAmmo = inRange || !!(m.custom && m.custom.inf);
+      $('spells').style.display = m.custom && !m.custom.skills ? 'none' : '';
       document.body.classList.toggle('range', inRange);
       rs = { shots: 0, hits: 0, heads: 0, kills: 0 };
       setViewGun(m.look ? sanitizeLook(m.look) : effLook());
@@ -1399,7 +1524,7 @@ function updateRoster(d) {
     html = mine.map(row).join('') + '<hr>' + theirs.map(row).join('');
     $('scB').textContent = d.sc[0];
     $('scR').textContent = d.sc[1];
-    $('rd').textContent = `ROUND ${d.rd} · FIRST TO 3`;
+    $('rd').textContent = `ROUND ${d.rd} · FIRST TO ${d.wr || 3}`;
   }
   if (html !== rosterHtml) { rosterHtml = html; $('roster').innerHTML = html; }
 }
@@ -1480,7 +1605,52 @@ function startGame(queue) {
 }
 $('quick').onclick = () => startGame('quick');
 $('ranked').onclick = () => startGame('ranked');
-$('rangebtn').onclick = () => startGame('range');
+
+// ------------------------------------------------------------------ practice: aim range + custom match settings
+const DEFAULT_CUSTOM = { mode: 2, map: 'olympus', bots: 'normal', rounds: 3, time: 90, ffaTime: 300, kills: 20, skills: true, hs: false, inf: false };
+const cust = { ...DEFAULT_CUSTOM };
+{
+  const s = store.get('custom', {});
+  if (s && typeof s === 'object') {
+    if (s.mode === 3 || s.mode === 'ffa') cust.mode = s.mode;
+    if (['easy', 'normal', 'hard', 'insane'].includes(s.bots)) cust.bots = s.bots;
+    for (const [k, lo, hi] of [['rounds', 1, 7], ['time', 30, 600], ['ffaTime', 60, 900], ['kills', 3, 60]]) if (Number.isFinite(s[k])) cust[k] = clamp(Math.round(s[k]), lo, hi);
+    for (const k of ['skills', 'hs', 'inf']) if (typeof s[k] === 'boolean') cust[k] = s[k];
+    if (typeof s.map === 'string') cust.map = s.map;
+  }
+  if (!(cust.mode === 'ffa' ? FFA_MAP_IDS : TEAM_MAP_IDS).includes(cust.map)) cust.map = cust.mode === 'ffa' ? FFA_MAP_IDS[0] : DEFAULT_MAP;
+}
+function renderPracList() {
+  const box = $('praclist'); box.innerHTML = '';
+  const save = () => store.set('custom', cust);
+  const row = (label, control) => { const r = document.createElement('div'); r.className = 'bindrow'; const l = document.createElement('span'); l.textContent = label; r.append(l, control); box.appendChild(r); };
+  const seg = (opts, key, after) => {
+    const d = document.createElement('div'); d.className = 'seg';
+    for (const [v, text] of opts) { const b = document.createElement('button'); b.textContent = text; b.className = cust[key] === v ? 'on' : ''; b.onclick = () => { cust[key] = v; if (after) after(); save(); renderPracList(); }; d.appendChild(b); }
+    return d;
+  };
+  const ffa = cust.mode === 'ffa';
+  row('Mode', seg([[2, '2 v 2'], [3, '3 v 3'], ['ffa', 'Free-for-all']], 'mode', () => { cust.map = (cust.mode === 'ffa' ? FFA_MAP_IDS : TEAM_MAP_IDS).includes(cust.map) ? cust.map : (cust.mode === 'ffa' ? FFA_MAP_IDS[0] : DEFAULT_MAP); }));
+  const sel = document.createElement('select');
+  for (const id of ffa ? FFA_MAP_IDS : TEAM_MAP_IDS) { const o = document.createElement('option'); o.value = id; o.textContent = MAPS[id].name; if (id === cust.map) o.selected = true; sel.appendChild(o); }
+  sel.onchange = () => { cust.map = sel.value; save(); };
+  row('Map', sel);
+  row('Bots', seg([['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard'], ['insane', 'Insane']], 'bots'));
+  if (ffa) {
+    row('Kills to win', seg([[10, '10'], [20, '20'], [30, '30'], [50, '50']], 'kills'));
+    row('Match length', seg([[180, '3 min'], [300, '5 min'], [600, '10 min']], 'ffaTime'));
+  } else {
+    row('Rounds to win', seg([[1, '1'], [2, '2'], [3, '3'], [5, '5']], 'rounds'));
+    row('Round length', seg([[45, '45s'], [90, '90s'], [120, '2 min'], [180, '3 min']], 'time'));
+  }
+  row('Skills', seg([[true, 'On'], [false, 'Off']], 'skills'));
+  row('Headshots only', seg([[false, 'Off'], [true, 'On']], 'hs'));
+  row('Ammo', seg([[false, 'Normal'], [true, 'Infinite']], 'inf'));
+}
+$('rangebtn').onclick = () => { renderPracList(); $('prac').classList.remove('hidden'); };
+$('pracclose').onclick = () => $('prac').classList.add('hidden');
+$('pracrange').onclick = () => { $('prac').classList.add('hidden'); startGame('range'); };
+$('pracstart').onclick = () => { $('prac').classList.add('hidden'); startGame('custom'); };
 $('searchcancel').onclick = () => { try { ws.send(JSON.stringify({ t: 'cancel' })); } catch { /* ignore */ } location.reload(); };
 $('resume').onclick = () => { lockPointer(); $('pause').classList.add('hidden'); };
 $('leave').onclick = () => location.reload();
@@ -1539,6 +1709,57 @@ function updatePickWindow() {
     $('pickover').classList.add('hidden');
     if (!locked) { $('pausetitle').textContent = 'NEXT MATCH'; $('pausesub').textContent = 'Click to take control.'; $('pause').classList.remove('hidden'); }
   }
+}
+
+
+// ------------------------------------------------------------------ scoreboard (hold Tab) and match recap
+let sbHeld = false;
+function sbRows(list, myIdv) {
+  return list.map((q) => `<tr class="${q.id === myIdv ? 'me' : ''} ${q.a ? '' : 'dead'}"><td>${esc(q.n)}${q.b ? '<span class="bot">BOT</span>' : ''}</td><td>${q.k}</td><td>${q.d}</td><td>${q.k + q.d ? (q.k / Math.max(1, q.d)).toFixed(2) : '0.00'}</td></tr>`).join('');
+}
+function renderScoreboard(rt) {
+  const box = $('sb');
+  if (!sbHeld || !playing || !latest) { box.classList.add('hidden'); return; }
+  const ps = [...latest.p].sort((a, b) => b.k - a.k || a.d - b.d);
+  const head = '<tr><th>Player</th><th>K</th><th>D</th><th>K/D</th></tr>';
+  let body;
+  if (inFfa) body = `<div class="sbteams one"><div class="sbt tf"><h4>FREE FOR ALL \u00b7 first to ${latest.kt || 20} kills</h4><table>${head}${sbRows(ps, myId)}</table></div></div>`;
+  else {
+    const mine = myTeam, other = 1 - myTeam;
+    const col = (tm, label) => `<div class="sbt t${tm}"><h4>${label} \u00b7 ${latest.sc ? latest.sc[tm] : 0}</h4><table>${head}${sbRows(ps.filter((q) => q.tm === tm), myId)}</table></div>`;
+    body = `<div class="sbteams">${col(mine, tm2name(mine) + ' (YOU)')}${col(other, tm2name(other))}</div>`;
+  }
+  const t = `${Math.floor(rt / 60)}:${String(Math.floor(rt % 60)).padStart(2, '0')}`;
+  const info = inFfa ? t : `Round ${latest.rd} \u00b7 ${t}`;
+  const html = `<div class="sbhead"><span>SCOREBOARD</span><small>${esc(MAPS[worldMapId] ? MAPS[worldMapId].name : '')} \u00b7 ${info}</small></div>${body}`;
+  if (box._h !== html) { box.innerHTML = html; box._h = html; }
+  box.classList.remove('hidden');
+}
+const tm2name = (t) => (t === 0 ? 'BLUE' : 'RED');
+window.addEventListener('keydown', (e) => { if (e.code === 'Tab' && playing && !listening) { e.preventDefault(); sbHeld = true; } });
+window.addEventListener('keyup', (e) => { if (e.code === 'Tab') { sbHeld = false; $('sb').classList.add('hidden'); } });
+window.addEventListener('blur', () => { sbHeld = false; $('sb').classList.add('hidden'); });
+
+let recapKey = '';
+function renderRecap() {
+  const box = $('recap');
+  if (!latest || !latest.rc) { box.innerHTML = ''; recapKey = ''; return; }
+  const key = latest.rc.map((r) => `${r.id}:${r.sh}:${r.hi}:${r.dm}`).join('|') + `|${latest.w}`;
+  if (key === recapKey) return;
+  recapKey = key;
+  const byId = new Map(latest.p.map((q) => [q.id, q]));
+  const rows = latest.rc.map((r) => ({ ...r, q: byId.get(r.id) })).filter((r) => r.q);
+  const mine = rows.find((r) => r.id === myId);
+  const score = (r) => r.q.k * 100 + r.dm / 10 + r.hd * 5 - r.q.d * 20;
+  const mvp = rows.length ? rows.reduce((a, b) => (score(b) > score(a) ? b : a)) : null;
+  const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '-');
+  let big = '';
+  if (mine) {
+    big = `<div class="rbig"><div><b>${mine.q.k} / ${mine.q.d}</b><small>Kills / Deaths</small></div><div><b>${pct(mine.hi, mine.sh)}</b><small>Accuracy</small></div><div><b>${pct(mine.hd, mine.hi)}</b><small>Headshots</small></div><div><b>${mine.dm}</b><small>Damage</small></div><div><b>${mine.bs}</b><small>Best streak</small></div><div><b>${mine.cs}</b><small>Skills used</small></div></div>`;
+  }
+  const sorted = [...rows].sort((a, b) => b.q.k - a.q.k || a.q.d - b.q.d);
+  const trs = sorted.map((r) => `<tr class="${r.id === myId ? 'me' : ''}"><td>${esc(r.q.n)}${r.q.b ? '<span class="bot" style="color:var(--dim);font-size:10px;margin-left:4px">BOT</span>' : ''}${mvp && r.id === mvp.id ? '<span class="mvp">MVP</span>' : ''}</td><td>${r.q.k}</td><td>${r.q.d}</td><td>${pct(r.hi, r.sh)}</td><td>${r.dm}</td></tr>`).join('');
+  box.innerHTML = `<h3>Match recap</h3>${big}<table><tr><th>Player</th><th>K</th><th>D</th><th>Acc</th><th>Dmg</th></tr>${trs}</table>`;
 }
 
 // ------------------------------------------------------------------ fixed-step update (60 Hz)
@@ -1760,7 +1981,8 @@ function render(dt, now) {
     const crouching = !!(pd.sf & 16);
     ent.cy += ((crouching ? 0.78 : 1) - ent.cy) * Math.min(1, dt * 14);
     ent.group.scale.set(1, ent.cy, 1);
-    ent.sprite.scale.set(2.2, 0.62 / ent.cy, 1);
+    ent.sprite.scale.set(2.2 * hs.bScale, (0.62 * hs.bScale) / ent.cy, 1);
+    ent.sprite.visible = hs.bOn;
     ent.eye = crouching ? 1.25 : EYE_H;
     const ally = !inFfa && pd.tm === myTeam;
     drawTag(ent, pd, ally);
@@ -1842,7 +2064,7 @@ window.addEventListener('keydown', (e) => { if (inRange && playing && e.code ===
 
 function updateHud(now) {
   if (inRange) updateRangeHud();
-  if (meAmmo !== ammoShown) { ammoShown = meAmmo; setText($('ammon'), inRange ? '\u221e' : String(meAmmo)); $('ammo').classList.toggle('low', meAmmo <= 3); }
+  if (meAmmo !== ammoShown) { ammoShown = meAmmo; setText($('ammon'), infAmmo ? '\u221e' : String(meAmmo)); $('ammo').classList.toggle('low', meAmmo <= 3); }
   const gt = gainT > 0 ? now - gainT : -1;
   const ag = $('ammogain');
   if (gainT < 0 && now + gainT < 0) { setText(ag, 'NO AMMO'); ag.style.opacity = '1'; }
@@ -1852,7 +2074,7 @@ function updateHud(now) {
   setText($('hpval'), String(meAlive ? meHp : 0));
   const hf = $('hpfill');
   hf.style.width = `${meAlive ? clamp(meHp / meMax, 0, 1) * 100 : 0}%`;
-  { const fr = meHp / meMax; hf.style.backgroundColor = fr > 0.5 ? '#4ade80' : fr > 0.25 ? '#facc15' : '#f87171'; hf.style.color = hf.style.backgroundColor; }
+  { const fr = meHp / meMax; hf.style.backgroundColor = hs.mMode === 'solid' ? hs.mColor : fr > 0.5 ? '#4ade80' : fr > 0.25 ? '#facc15' : '#f87171'; hf.style.color = hf.style.backgroundColor; }
 
   const spells = $('spells').children;
   for (let i = 0; i < spells.length; i++) {
@@ -1892,6 +2114,8 @@ function updateHud(now) {
 
   const sinceSnap = (now - snapAt) / 1000;
   const rt = phase === 'live' ? Math.max(0, latest.rt - sinceSnap) : latest.rt;
+  renderScoreboard(rt);
+  if (phase === 'matchEnd') renderRecap();
   setText($('timer'), `${Math.floor(rt / 60)}:${String(Math.floor(rt % 60)).padStart(2, '0')}`);
 
   let big = '', small = '';

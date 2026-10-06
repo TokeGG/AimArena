@@ -1,12 +1,12 @@
 {
   "name": "aim-arena",
-  "version": "0.8.8",
+  "version": "0.9.0",
   "description": "2v2 / 3v3 arena shooter with abilities (browser + Node, zero npm dependencies)",
   "type": "module",
   "main": "server.js",
   "engines": { "node": ">=18" },
   "scripts": {
     "start": "node server.js",
-    "test": "node test/headless.mjs && node test/lagcomp.mjs && node test/skills.mjs && node test/anticheat.mjs && node test/visibility.mjs && node test/map.mjs && node test/maps.mjs && node test/ffa.mjs && node test/spectate.mjs && node test/leaderboard.mjs && node test/lobby.mjs && node test/botlevel.mjs && node test/auth.mjs && node test/safety.mjs"
+    "test": "node test/headless.mjs && node test/lagcomp.mjs && node test/skills.mjs && node test/anticheat.mjs && node test/visibility.mjs && node test/map.mjs && node test/maps.mjs && node test/ffa.mjs && node test/spectate.mjs && node test/leaderboard.mjs && node test/lobby.mjs && node test/botlevel.mjs && node test/custom.mjs && node test/auth.mjs && node test/safety.mjs"
   }
 }

@@ -137,6 +137,14 @@ The server decides everything (movement, hits, ammo, cooldowns), so a modified c
 
 Without `ADMIN_KEY` the page says the admin is switched off and tells you what to set. The log and bans are saved in the same storage as accounts, so they only survive restarts with Upstash connected.
 
+## Scoreboard, recap, HUD style and practice (v0.9)
+
+- **Scoreboard:** hold **Tab** during a match to see both teams (or everyone in free-for-all) with kills, deaths and K/D, bots marked BOT.
+- **Match recap:** the page between matches (where you pick skills again) now starts with your kills/deaths, accuracy, headshot %, damage, best streak and skills used, plus a table for every player with an MVP tag.
+- **Damage numbers and health bars:** Menu > Options > Numbers & bars, or the same button in the pause menu. You can change damage number size, colours, outline, motion (rise / pop / still) and how long they last; the bars above players (size, thickness, opacity, names, health number, team / by-health / custom colours); and your own health bar (size, number, colour). Saved in your browser.
+- **Practice** (menu tile): *Aim range* is the old target range. *Custom match* is a private match against bots with your own rules: mode and map, bot level, rounds to win and round length (or kills to win and match length in free-for-all), skills on/off, headshots only, infinite ammo. Nothing counts toward stats, rank or challenges, and it is never listed under Watch live.
+- **Quick Play** fills a room that already has players (taking over a bot slot) before it makes a new room. The bot level of a room is set by whoever created it.
+
 ## Rivals and sounds
 
 - Rivalry: every kill between two signed-in human players on opposite teams adds to a lifetime head-to-head. From the second encounter a toast shows `you 7 - 4 them` (with NEMESIS when you are 2+ behind). Profile lists your top rivals. Bots and guests do not count.
