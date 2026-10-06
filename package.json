@@ -1,6 +1,6 @@
 {
   "name": "aim-arena",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "2v2 / 3v3 arena shooter with abilities (browser + Node, zero npm dependencies)",
   "type": "module",
   "main": "server.js",

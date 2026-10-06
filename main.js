@@ -7,7 +7,7 @@ import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.8.4';
+const CLIENT_VERSION = '0.8.5';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -1163,6 +1163,8 @@ $('dailyclose').onclick = () => { $('daily').classList.add('hidden'); clearInter
 
 // ------------------------------------------------------------------ admin panel (owner only; the server checks the key on every call)
 {
+  // The panel's markup lives here (not only in index.html) so a stale or mismatched page can never leave it half-built.
+  { const old = document.getElementById('admin'); if (old) old.remove(); document.body.insertAdjacentHTML('beforeend', "<div id=\"admin\" class=\"modal hidden\">\n  <div class=\"card\" style=\"width:min(960px,94vw)\">\n    <h2>ADMIN PANEL</h2>\n    <div class=\"row\"><input id=\"adkey\" type=\"password\" placeholder=\"Admin key\" autocomplete=\"off\" style=\"flex:1\"><button id=\"adgo\">Unlock</button><button id=\"adclose\">Close</button></div>\n    <div id=\"adstatus\" class=\"err\"></div>\n    <div id=\"adbody\" class=\"hidden\">\n      <div class=\"tabs row\"><button data-tab=\"online\" class=\"on\">Online</button><button data-tab=\"log\">Flags &amp; reports</button><button data-tab=\"bans\">Bans</button><button data-tab=\"ban\">Ban someone</button><button id=\"adrefresh\">&#8635; Refresh</button></div>\n      <div id=\"adt-online\" class=\"adtab\"></div>\n      <div id=\"adt-log\" class=\"adtab hidden\"></div>\n      <div id=\"adt-bans\" class=\"adtab hidden\"></div>\n      <div id=\"adt-ban\" class=\"adtab hidden\">\n        <div class=\"row\"><select id=\"adbtype\"><option value=\"user\">Account name</option><option value=\"ip\">IP hash</option></select>\n        <input id=\"adbid\" placeholder=\"name or ip hash\" style=\"flex:1\">\n        <select id=\"adbhours\"><option value=\"1\">1 hour</option><option value=\"24\">1 day</option><option value=\"168\">1 week</option><option value=\"0\">Permanent</option></select></div>\n        <div class=\"row\"><input id=\"adbreason\" placeholder=\"reason\" style=\"flex:1\"><button id=\"adbgo\">Ban</button></div>\n      </div>\n    </div>\n  </div>\n</div>"); }
   const KEY = 'aim-admin-key';
   const adApi = async (path, body) => {
     const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 12000);
