@@ -337,6 +337,33 @@
   .pstack .danger { color:#ffb3a6; border-color:rgba(255,110,90,.5); background:rgba(255,84,54,.1); }
   .pstack .danger:hover { background:rgba(255,84,54,.28); border-color:#ff7a62; color:#fff; }
   @media (max-width:700px) { .optgrid { grid-template-columns:1fr; } .hub { grid-template-columns:repeat(2,1fr); } #side { padding:20px 16px 24px; } #foot { margin:14px -16px -24px; padding:14px 16px 18px; } }
+
+  /* COMPACT MENU (v0.8.2) */
+  #side.looking #mainview { display:none; }
+  #side.looking #logo { display:none; }
+  .subview.hidden { display:none; }
+  .sec.compact { padding:2px 16px 14px; margin-bottom:10px; }
+  .sec.compact h3 { margin:12px 0 7px; }
+  .tiles { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
+  .tile { display:flex; align-items:center; gap:10px; text-align:left; padding:11px 12px; border-radius:12px; border:1px solid rgba(226,184,74,.25); background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); min-width:0; }
+  .tile:hover { border-color:var(--gold); }
+  .tile .tt { flex:1; min-width:0; display:block; }
+  .tile small { display:block; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--dim); margin-bottom:2px; }
+  .tile b { display:block; font-size:13px; font-weight:700; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile b.warn { color:#ffb04a; }
+  .tile em { font-style:normal; font-size:22px; color:var(--gold); line-height:1; }
+  .tile .tsw { width:34px; height:34px; border-radius:8px; flex:none; border:1px solid rgba(255,255,255,.2); }
+  .hub { grid-template-columns:repeat(6,1fr); gap:6px; }
+  .hub button { padding:9px 2px; font-size:10px; gap:3px; letter-spacing:0; }
+  .hub button i { font-size:18px; }
+  #foot { margin:10px -30px -30px; padding:12px 30px 16px; }
+  #side .title { margin:0 0 6px; font-size:30px; }
+  .sec.compact button { padding:8px 6px; }
+  .sec.compact input[type=text] { padding:8px 12px; }
+  #side #ver { margin:6px 0 0; }
+  #acct { margin-bottom:8px; }
+  #persist { margin:0 0 8px; }
+  @media (max-width:700px) { .tiles { grid-template-columns:1fr; } .hub { grid-template-columns:repeat(3,1fr); } }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
@@ -370,59 +397,37 @@
 <div id="menu">
   <div id="side">
     <h1 id="logo" class="title">AIM <span>ARENA</span></h1>
-    <p class="sub">Olympus Arena &middot; 2v2 / 3v3 &middot; bots fill empty slots</p>
-    <div id="mainview">
+        <div id="mainview">
     <div id="verwarn" class="hidden"></div>
 
     <div id="acct"></div>
     <div id="persist" class="hidden">Accounts are only saved temporarily until the server database is connected.</div>
 
-    <section class="sec">
+    <section class="sec compact">
       <div class="guestonly" id="nameblock"><h3>Name</h3>
       <input id="name" type="text" maxlength="14" autocomplete="off"></div>
-
       <h3>Mode</h3>
       <div class="row modes"><button id="m2">2 v 2</button><button id="m3">3 v 3</button><button id="mffa">Free-for-all</button></div>
       <div id="ffa-note" class="hidden">8 players, every player for themselves. Respawn after 3s. First to 20 kills (or best score after 5 minutes) wins. Not ranked.</div>
-
-      <h3>Map</h3>
-      <div class="maps" id="mappick"></div>
-
       <div id="teamblock"><h3>Team</h3>
       <div class="row teams" id="teampick">
         <button data-team="-1">Auto</button><button data-team="0">Blue</button><button data-team="1">Red</button>
       </div></div>
     </section>
 
-    <section class="sec">
-      <h3><b class="stepn">1</b> Your character</h3>
-      <div class="charcard"><div id="charsum"></div><button id="customizebtn">Customize</button></div>
-      <div class="hint">Everyone has the same health and speed. Your look is just for style.</div>
-    </section>
-
-    <section class="sec">
-      <h3><b class="stepn">2</b> Pick 3 skills</h3>
-      <div class="slots" id="slots"></div>
-      <div class="hint">Click a skill below to fill the next free slot. Click a filled slot to remove it.</div>
-      <div class="spells" id="spellpick" style="margin-top:10px"></div>
-    </section>
-
-    <section class="sec">
-      <h3>Options</h3>
-      <div class="optgrid">
-        <div><div class="hint" style="margin:0 0 4px">Graphics</div><div class="row"><button id="qh">High</button><button id="ql">Fast</button></div></div>
-        <div><div class="hint" style="margin:0 0 4px">Sensitivity <span id="sensv"></span></div><input id="sens" type="range" min="0.2" max="3" step="0.05"></div>
-        <div><div class="hint" style="margin:0 0 4px">Volume <span id="volv"></span></div><input id="vol" type="range" min="0" max="1" step="0.05"></div>
-      </div>
-      <div class="row" style="margin-top:12px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
-    </section>
+    <div class="tiles">
+      <button class="tile" id="mapbtn"><span class="tsw" id="mapsw"></span><span class="tt"><small>Map</small><b id="mapname"></b></span><em>&rsaquo;</em></button>
+      <button class="tile" id="skillbtn"><span class="tt"><small>Skills</small><b id="skillsum"></b></span><em>&rsaquo;</em></button>
+      <button class="tile" id="customizebtn"><span class="tt"><small>Character</small><b id="charsum"></b></span><em>&rsaquo;</em></button>
+      <button class="tile" id="optbtn"><span class="tt"><small>Options</small><b>Graphics, sound, controls</b></span><em>&rsaquo;</em></button>
+    </div>
 
     <div class="hub">
       <button id="watchbtn"><i>&#128065;</i>Watch live</button>
       <button id="lbbtn"><i>&#127942;</i>Leaderboard</button>
       <button id="profbtn"><i>&#128100;</i>Profile</button>
-      <button id="dailybtn"><i>&#128197;</i>Daily challenges</button>
-      <button id="rangebtn"><i>&#127919;</i>Practice range</button>
+      <button id="dailybtn"><i>&#128197;</i>Daily</button>
+      <button id="rangebtn"><i>&#127919;</i>Practice</button>
       <button id="adminbtn"><i>&#128737;</i>Admin</button>
     </div>
     <div id="foot">
@@ -431,8 +436,31 @@
         <button id="ranked" class="playbtn alt">RANKED<small id="rankedsub">sign in to play</small></button>
       </div>
     </div>
-    <div class="keys">Default keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Shift</kbd> crouch &nbsp; <kbd>Click</kbd> shoot (one shot per click) &nbsp; <kbd>Q</kbd> <kbd>E</kbd> <kbd>R</kbd> skills &nbsp; <kbd>Esc</kbd> menu. Change them under "Change keybinds".</div>
     <div id="ver"></div>
+    </div>
+    <div id="mapview" class="subview hidden">
+      <h1 class="title" style="font-size:34px">PICK A MAP</h1>
+      <p class="sub">Click a map to select it.</p>
+      <div class="maps" id="mappick"></div>
+      <button class="playbtn subdone" data-close style="width:100%;margin-top:14px;font-size:16px">BACK</button>
+    </div>
+    <div id="skillview" class="subview hidden">
+      <h1 class="title" style="font-size:34px">PICK 3 SKILLS</h1>
+      <p class="sub">Click a skill to fill the next free slot. Click a filled slot to remove it.</p>
+      <div class="slots" id="slots"></div>
+      <div class="spells" id="spellpick" style="margin-top:10px"></div>
+      <button class="playbtn subdone" data-close style="width:100%;margin-top:14px;font-size:16px">DONE</button>
+    </div>
+    <div id="optview" class="subview hidden">
+      <h1 class="title" style="font-size:34px">OPTIONS</h1>
+      <div class="optgrid">
+        <div><div class="hint" style="margin:0 0 4px">Graphics</div><div class="row"><button id="qh">High</button><button id="ql">Fast</button></div></div>
+        <div><div class="hint" style="margin:0 0 4px">Sensitivity <span id="sensv"></span></div><input id="sens" type="range" min="0.2" max="3" step="0.05"></div>
+        <div><div class="hint" style="margin:0 0 4px">Volume <span id="volv"></span></div><input id="vol" type="range" min="0" max="1" step="0.05"></div>
+      </div>
+      <div class="row" style="margin-top:12px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
+      <div class="keys">Default keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Shift</kbd> crouch &nbsp; <kbd>Click</kbd> shoot &nbsp; <kbd>Q</kbd> <kbd>E</kbd> <kbd>R</kbd> skills (press, then shoot) &nbsp; <kbd>Esc</kbd> menu.</div>
+      <button class="playbtn subdone" data-close style="width:100%;margin-top:14px;font-size:16px">DONE</button>
     </div>
     <div id="lookview" class="hidden">
       <h1 class="title" style="font-size:34px">CUSTOMIZE</h1>

@@ -7,7 +7,7 @@ import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.8.1';
+const CLIENT_VERSION = '0.8.2';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -442,7 +442,7 @@ const LOOK_GROUPS = [['helm', 'Helmet'], ['shoulder', 'Shoulders'], ['back', 'Ba
 const COLOR_GROUPS = [['c1', 'Primary colour'], ['c2', 'Secondary colour'], ['glow', 'Glow colour']];
 function renderCharSum() {
   const l = effLook();
-  $('charsum').innerHTML = `<b>${esc(MODELS[l.model].name)} build</b> &middot; ${esc(LOOK_PARTS.helm[l.helm])}, ${esc(LOOK_PARTS.shoulder[l.shoulder])}, ${esc(LOOK_PARTS.back[l.back])}, ${esc(LOOK_PARTS.mat[l.mat])}`
+  $('charsum').innerHTML = `${esc(MODELS[l.model].name)} &middot; ${esc(LOOK_PARTS.helm[l.helm])}`
     + ` <span class="dots"><i style="background:${l.c1}"></i><i style="background:${l.c2}"></i><i style="background:${l.glow}"></i></span>`;
 }
 function lookChanged() {
@@ -500,8 +500,24 @@ function renderLookView() {
     box.appendChild(g);
   }
 }
-$('customizebtn').onclick = () => { $('side').classList.add('looking'); $('lookview').classList.remove('hidden'); renderLookView(); };
-$('lookdone').onclick = () => { $('side').classList.remove('looking'); $('lookview').classList.add('hidden'); };
+const SUBS = ['lookview', 'mapview', 'skillview', 'optview'];
+function openSub(id) {
+  $('side').classList.add('looking');
+  for (const v of SUBS) $(v).classList.toggle('hidden', v !== id);
+  $('side').scrollTop = 0;
+  if (id === 'lookview') renderLookView();
+}
+function closeSub() {
+  $('side').classList.remove('looking');
+  for (const v of SUBS) $(v).classList.add('hidden');
+  $('side').scrollTop = 0;
+}
+$('customizebtn').onclick = () => openSub('lookview');
+$('mapbtn').onclick = () => openSub('mapview');
+$('skillbtn').onclick = () => openSub('skillview');
+$('optbtn').onclick = () => openSub('optview');
+$('lookdone').onclick = closeSub;
+for (const b of document.querySelectorAll('[data-close]')) b.onclick = closeSub;
 $('lookrandom').onclick = () => { cfg.look = clampLook(randomLook(), myLevel()); lookChanged(); };
 $('lookreset').onclick = () => { cfg.look = sanitizeLook(DEFAULT_LOOK); lookChanged(); };
 
@@ -526,12 +542,18 @@ function renderMenu() {
     const b = document.createElement('button');
     b.className = 'mapcard' + (chosenMap() === id ? ' on' : '');
     b.innerHTML = `<div class="sw" style="background:linear-gradient(110deg, ${hex(t.haze)}, ${t.floor} 55%, ${hex(t.accent)})"></div><div class="tx"><b>${esc(m.name)}</b><small>${esc(m.tagline)} &middot; ${m.size * 2}m wide</small></div>`;
-    b.onclick = () => { if (isFfaMode()) cfg.ffaMap = id; else cfg.map = id; renderMenu(); };
+    b.onclick = () => { if (isFfaMode()) cfg.ffaMap = id; else cfg.map = id; renderMenu(); closeSub(); };
     mp.appendChild(b);
   }
 
   renderPicker({ slots: 'slots', spells: 'spellpick' }, cfg, () => renderMenu());
   renderCharSum();
+  { const cm = MAPS[chosenMap()], ct = cm.theme;
+    $('mapname').textContent = cm.name;
+    $('mapsw').style.background = `linear-gradient(110deg, ${hex(ct.haze)}, ${ct.floor} 55%, ${hex(ct.accent)})`;
+    const left = SLOT_COUNT - cfg.loadout.length, sb = $('skillsum');
+    sb.classList.toggle('warn', left > 0);
+    sb.textContent = left > 0 ? `Pick ${left} more` : cfg.loadout.map((id) => SPELLS[id].name).join(' · '); }
   const ready = cfg.loadout.length === SLOT_COUNT;
   $('quick').disabled = !ready;
   $('ranked').disabled = !ready || isFfaMode();
