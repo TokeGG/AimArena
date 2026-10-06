@@ -1,14 +1,18 @@
 # Aim Arena
 
-2v2 and 3v3 arena shooter with abilities, playable in the browser. Server-authoritative, bots fill empty slots, first team to 3 round wins takes the match.
+A fast arena shooter that runs in your browser. 2v2, 3v3 or free-for-all, three skills of your choice, bots to fill empty slots, ranked matches and a leaderboard. Nothing to download or install.
 
-## Run it
+## Play now
 
-1. Install Node.js 18 or newer from https://nodejs.org
-2. In this folder: `node server.js` (no `npm install` needed, there are no dependencies)
-3. Open http://localhost:3000, pick a mode, a map, a team, your look and three skills, then click QUICK PLAY or RANKED (free-for-all has no ranked)
+**https://aimarena.onrender.com**
 
-The browser loads Three.js from a CDN (jsDelivr), so it needs internet access.
+Open the link in Chrome, Edge or Firefox on a computer (mouse and keyboard), pick a mode, a map, your look and three skills, then press **QUICK PLAY** (or **RANKED** once you have an account).
+
+- The first visit after a quiet spell can take up to a minute while the server wakes up. If the page is slow, wait and reload.
+- It needs a normal internet connection. A wired or good wifi connection gives the fairest hits.
+- Guests can play everything except ranked, XP and the leaderboard. Sign up (name + password) in the menu to keep your level, unlocks and rating.
+- If the game looks outdated after an update, press **Ctrl+Shift+R** to reload fresh.
+- Invite friends by sending them the link: anyone who picks the same mode and map is placed in the same room.
 
 ## Play modes
 
@@ -28,35 +32,15 @@ The browser loads Three.js from a CDN (jsDelivr), so it needs internet access.
 | Ashpit | 64 m | Free-for-all | Lava pit with bridges and pillars (FFA) |
 | Necropolis | 96 m | Free-for-all | Ruined graveyard city with four districts and lava pits |
 - **Between matches**: after a match ends you get 15 seconds to change skills for the next one.
-
 ## Hit feedback
 
 Damage numbers float off enemies you hit (gold and bigger for headshots, with a two-tone ding), a red arc shows the direction you were hit from, and the kill feed is top right. After you die to a player, a 3 second kill-cam replays the last moments from the killer's eyes.
-
 ## Ammo and fire rate
 
 One shot every half second. You start every round (and every respawn in free-for-all) with 15 rounds. A kill gives +5, up to 30. There is no reload: at 0 you can't shoot, only use skills, until you get a kill (or the next round). The ammo count is bottom right, with a bar showing the shot cooldown. Tune AMMO_START, AMMO_KILL, AMMO_MAX and FIRE_INTERVAL at the top of `sim.js`.
-
 ## Spectating
 
 Menu > Watch live games lists every game with at least one real player (map, mode, score, who is playing, how many are watching). Click WATCH to follow a player in first person. Click, the arrow keys or A/D switch players, right click goes back, LEAVE returns to the menu. Spectators can't affect the game, and up to 20 can watch one room.
-
-## Accounts
-
-Sign up in the menu (name + password). Passwords are hashed (scrypt). Rank tiers: Bronze, Silver (1000), Gold (1200), Platinum (1400), Diamond (1600), Olympian (1800).
-
-Render's free plan wipes the disk on every restart, so accounts only last if you connect a free Upstash Redis database:
-
-1. Create a free database at https://upstash.com (Redis)
-2. Copy the REST URL and REST TOKEN
-3. In Render, Environment tab, add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`, then redeploy
-
-Without them the menu shows a warning that accounts are temporary. Locally you can set `DATA_DIR` to choose where the fallback file is kept.
-
-## Play with friends
-
-Anyone who can reach your server and picks the same mode, map and ranked setting joins the same room. On your home network, share `http://<your-computer-IP>:3000`. Over the internet, host the folder on any Node host (Render, Fly.io, a VPS). Set the port with the `PORT` environment variable.
-
 ## Controls (rebindable under KEYBINDS in the menu or pause screen)
 
 Every action (including Fire and the three skills) can use a keyboard key, any mouse button (left, right, middle, side buttons) or a scroll-wheel notch. The CROSSHAIR button opens the crosshair editor (shape, colour, size, thickness, gap, opacity, outline, centre dot).
@@ -70,7 +54,6 @@ Every action (including Fire and the three skills) can use a keyboard key, any m
 | Wheel | Unbound by default; can be bound to any action |
 | Q / E / R | Your three chosen skills |
 | Esc | Pause menu |
-
 ## Characters and customization
 
 Everyone has the same stats: 150 health, speed 7.0, normal heal. Shots to kill: 7 body / 4 head. Nothing about your character changes how you play.
@@ -82,7 +65,6 @@ The main menu is one compact screen: name, mode and team, then four tiles (Map, 
 Menu > Character (Customize) changes how you look: body style (Striker, Vanguard, Phantom, Warden), helmet (8), shoulders (6), back piece (7), material (8), kill effect (8), plus primary, secondary and glow colours (presets or any colour). Randomize and Reset are there too. Your look is saved in your browser and everyone in the match sees it. Team colour still shows on a glowing band so you can tell sides apart. Fast graphics lowers character detail.
 
 Maps use generated textures (marble, forged metal, ice, brick, crypt stone) with per-theme details such as snow caps, ember strips and moss. Enemy name plates show only while that enemy is visible; allies always show.
-
 ## Skills (pick any three, 5 skill points to spend)
 
 Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
@@ -111,32 +93,6 @@ Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
 | Overcharge | 14s | Your next rifle shot (6s to use it) does double damage |
 
 Rifle: 22 body / 45 headshot damage, 150 HP, 0.5s between shots. Sounds are soft synthesized tones with a Volume slider under Options. Lava on Foundry burns anyone touching the floor in it.
-
-## Safety and anti-cheat
-
-The server decides everything (movement, hits, ammo, cooldowns), so a modified client cannot give itself damage, ammo or speed. On top of that:
-
-| Protection | What it does |
-|---|---|
-| Input throttle | A client may only use about 60 inputs per second (small burst allowed). Sending them faster to run faster does nothing. |
-| Rewind limit | A shot can only be rewound as far as the player's measured ping explains (+170 ms), so faking lag to hit "old" positions is capped. |
-| Wall-hack protection | Enemies you and your teammates cannot see are sent WITHOUT their position (only the spot you last saw them). Marked players, whoever just hit you, and anyone within 3.5 m are still sent. Enemy Slow Traps are hidden until you are within 7 m. |
-| Spectator delay | Spectators see the match 8 s late, so a friend watching cannot call out positions. `SPEC_DELAY=0` turns it off. |
-| Flags | Logged for you to review: input flooding, firing during the cooldown, view snapping right before hits, runs of near-perfect headshots, 3+ different players reporting someone. Input flooding and firing during the cooldown also disconnect the client if extreme. Aim flags never ban automatically. |
-| Reports | Pause menu or end screen > Report. 3 reports per player per 10 minutes. |
-| Names | Profanity, leetspeak (`sh1t`), spaced letters and impersonation (`Admin`, bot names, existing accounts) are blocked. Extend with `BLOCKED_WORDS=word1,word2`. |
-| Connection limits | Same-site origins only, 10 sockets per address, 8 KB message cap, message flood kick. |
-| Browser protection | Content-Security-Policy, no framing, no MIME sniffing. |
-| Privacy | IP addresses are never stored: logs and bans use a 12-character salted hash. |
-
-### Moderating (the Admin page)
-
-1. On Render add the environment variable `ADMIN_KEY` (any 12+ character secret). Optional: `TRUST_PROXY_HOPS=1`.
-2. Click **Admin** in the menu (or go to `yourgame.onrender.com/admin`), type the key, press Unlock. The page is built into `server.js`, so there is no extra file to upload. It prints each request it makes under the key box, so problems are visible.
-3. You get: who is online (with account and address hash), the log of flags and reports, and bans. Click Ban account or Ban IP on a row, pick a duration, Ban. The player is disconnected immediately. Unban from the Bans table.
-
-Without `ADMIN_KEY` the page says the admin is switched off and tells you what to set. The log and bans are saved in the same storage as accounts, so they only survive restarts with Upstash connected.
-
 ## Scoreboard, recap, HUD style and practice (v0.9)
 
 - **Scoreboard:** hold **Tab** during a match to see both teams (or everyone in free-for-all) with kills, deaths and K/D, bots marked BOT.
@@ -149,55 +105,107 @@ Without `ADMIN_KEY` the page says the admin is switched off and tells you what t
 
 Profile > **Edit profile** (signed in). Pick a **title** (Rookie, Marksman, Duelist, Gladiator, Champion, Legend by level; Slayer / Reaper by kills; Victor / Warlord by match wins; Gold / Platinum / Diamond / Olympian by rating), an **icon** (12, unlocked by level, the crown at rating 1800) and a **name colour** (9, by level). Locked ones show what unlocks them. What you pick shows next to your name on the scoreboard, recap, leaderboard, kill feed and above your head (icon).
 
-**Being the owner:** open `/admin`, enter your key, tab **Owner & titles**, type your game account name and press Make owner (or set the `OWNER_USERS` env var on Render). Then Profile > Edit profile has an **Owner: your own** box where you can type any title, any emoji icon and any name colour, plus an OWNER title.
-
-**Awarding others:** same admin tab, type an account name, a title, an icon and a colour, press Award. They get it in their editor and can wear it; you can remove it again. Everything is checked on the server, so nobody can wear what they have not earned or been given.
+The game owner can also wear any custom title, icon and colour, and can award special ones to players.
 
 ## Rivals and sounds
 
 - Rivalry: every kill between two signed-in human players on opposite teams adds to a lifetime head-to-head. From the second encounter a toast shows `you 7 - 4 them` (with NEMESIS when you are 2+ behind). Profile lists your top rivals. Bots and guests do not count.
 - Every kind of hit has its own sound: normal, headshot, overcharged (deep thump), bound (chain), into a shield (clang), barbed (squelch), frost nova (chime). Skills also have their own cues (trap snap, mark ping, gravity drone, polymorph baa, overcharge power-up).
-
 ## Match end, kill effects, daily challenges
 
 - After every match: PLAY AGAIN (everyone pressing it starts the next match in 2s; otherwise the normal 15s timer runs) and LEAVE.
 - Kill effects: what everybody sees where YOU score a kill. Burst (free), Embers Lv3, Frost shatter Lv6, Lightning Lv9, Confetti Lv12, Ghost rise Lv16, Gold coins Lv20, Void collapse Lv25. Clicking one in the customizer previews it.
 - New parts: Crown helm Lv18, Skull mask Lv22, Orbs Lv15, Crystals Lv24, Halo Lv16, Wings Lv27, Gilded material Lv20, Void material Lv26.
 - Daily challenges (menu button): 3 per day (easy / medium / hard) paying 40 / 70 / 110 XP. Same for everyone, reset at midnight US Central. Kills and damage on bots do not count, and matches only count with 2+ real players. Needs a signed-in account.
-
 ## Rifle and skins
 
 Everyone carries an AK-style rifle (built from simple shapes, no downloads). The **Rifle skin** row in the customizer picks a paint job; other players see it on your gun too, and the menu podium previews it. Unlock levels: Classic AK (free), Redline Lv2, Jungle Camo Lv4, Wasteland Lv6, Frostbite Lv8, Neon Grid Lv11, Inferno Lv14, Toxic Lv17, Gilded Lv20, Void Prism Lv24. Neon Grid uses your glow colour; the small strip on top of the rifle always uses it. Skins are cosmetic only. To tune where the rifle sits on screen, edit `GUN_X`, `GUN_Y`, `GUN_Z`, `GUN_SCALE` near the top of the viewmodel block in `main.js`.
-
 ## Levels, unlocks, leaderboard, practice range
 
 - XP: +5 per enemy kill, +40 per finished match, +60 for a win. Level = 1 + floor(sqrt(XP / 60)), max 30.
 - Customizer parts unlock by level (locked ones show a lock and the level needed). Guests are level 1 and earn nothing.
 - Leaderboard (menu button): Wins, Kills, Rating tabs, top 25. Wins = match wins in any mode. Profile shows level, XP, kills, deaths, K/D, wins.
 - Practice range: private room with 5 moving target dummies, infinite ammo, no timer. Panel shows shots, hits, accuracy, headshots. Backspace resets. Nothing counts toward stats.
+## Accounts
 
-## Layout (all files sit in one flat folder)
+Sign up in the menu (name + password, 6-72 characters). Passwords are never stored, only a salted scrypt hash. Rank tiers: Bronze, Silver (1000), Gold (1200), Platinum (1400), Diamond (1600), Olympian (1800).
+
+## Fair play and safety
+
+- The server decides everything (movement, hits, ammo, cooldowns), so a modified client cannot give itself damage, ammo or speed. Enemies you cannot see are not even sent to your browser, so wall-hacks have nothing to read.
+- Spectators see the match 8 seconds late so a watching friend cannot call out positions.
+- Suspicious behaviour is logged for the owner to review (input flooding, firing during cooldown, view snapping, runs of perfect headshots, repeated reports).
+- Report a player from the pause menu or end screen. Names are filtered for profanity, leetspeak and impersonation.
+- Your IP address is never stored; moderation logs only keep a 12-character salted hash.
+- Your password and login token are only ever sent to this site. Never type your password anywhere else, and the owner will never ask you for it.
+
+## For the owner (hosting and moderation)
+
+Players do not need any of this. The game is hosted on Render from the GitHub repo `TokeGG/aimarena`; every push to `main` redeploys it (wait for **Deploy live**, then players reload with Ctrl+Shift+R). Running it locally is only for development: `node server.js` (Node 18+, no dependencies) then open http://localhost:3000, and `npm test` runs the test suite.
+
+### Environment variables (Render > Environment)
+
+| Variable | Purpose |
+|---|---|
+| `ADMIN_KEY` | Secret of 12+ characters that unlocks `/admin`. Without it the admin page is switched off. |
+| `OWNER_USERS` | Comma-separated game account names that count as owner (free-form title, icon and name colour). |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Free Upstash Redis database so accounts, stats, bans and logs survive restarts (Render's free disk is wiped on every restart). |
+| `TRUST_PROXY_HOPS` | Set to `1` on Render so the real player address (not Render's proxy) is used for limits and bans. |
+| `ALLOWED_ORIGINS` | Extra origins allowed to open game sockets (a custom domain). The site's own address is always allowed. |
+| `MAX_CONN_PER_IP` | Sockets allowed per address (default 10). |
+| `SPEC_DELAY` | Spectator delay in seconds (default 8, `0` = off). |
+| `IP_SALT` | Secret salt for address hashes (set any random string so hashes can't be reversed). |
+| `BLOCKED_WORDS` | Comma-separated extra words to block in names. |
+| `PORT`, `DATA_DIR` | Port and fallback data folder (Render sets the port itself). |
+
+### Upstash setup
+
+1. Create a free Redis database at https://upstash.com.
+2. Copy the REST URL and REST TOKEN.
+3. Add them as `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` in Render and redeploy.
+
+Without them the menu warns that accounts are temporary. `/api/status` shows `persistent: true` when it works.
+
+### Moderating (the Admin page)
+
+1. Set `ADMIN_KEY`, then open `https://aimarena.onrender.com/admin` (or the **Admin** menu button) and press Unlock.
+2. Tabs: who is online (account and address hash), flags and reports, bans, Ban someone, and **Owner & titles**.
+3. Click Ban account or Ban IP on a row, choose a duration, Ban. The player is disconnected immediately. Unban from the Bans tab.
+
+**Owner and titles:** in the Owner & titles tab type your game account name and press Make owner. Then Profile > Edit profile has an **Owner** box for any title, emoji icon and name colour. You can also award a custom title, icon and colour to any player there, and remove it again. Everything is checked on the server.
+
+### Security measures
+
+| Area | Protection |
+|---|---|
+| Authority | Server-authoritative simulation; input rate limit; lag-compensation rewind capped by measured ping; per-viewer snapshot culling. |
+| Accounts | scrypt password hashes, random 32-byte session tokens in a bearer header (no cookies, so no CSRF), 30-day expiry, generic login errors, constant-time checks, reserved/impersonating usernames refused. |
+| Rate limits | Auth requests per IP, 6 new accounts per IP per hour, 10 login tries per account per 5 minutes, admin key guesses 8 per minute (only wrong keys count), report limits per player. |
+| Admin | Key compared in constant time, never stored in the page or logs, disabled unless `ADMIN_KEY` is 12+ characters. |
+| WebSocket | Same-site origin check, banned-address check, per-address connection cap, 8 KB message and reassembled-message cap, masked frames only, reserved bits/unknown opcodes/oversized or fragmented control frames dropped, slow-reader backlog cap, flood kick. |
+| HTTP server | Only listed game files are served (source, tests and data are not), GET/HEAD only for files, 4 KB JSON body cap, header/request timeouts against slow-loris, crash guards. |
+| Browser | Content-Security-Policy (scripts only from this site and the pinned jsDelivr three.js build), no framing, no MIME sniffing, HSTS, same-origin opener/resource policy, no referrer, camera/mic/geolocation off. All player text is HTML-escaped before display. |
+| Privacy | IP addresses are never stored, only a salted 12-character hash. |
+
+Known gap: three.js is loaded from the jsDelivr CDN (pinned to version 0.170.0). Hosting that one file from this server would let the CSP drop the CDN entirely.
+
+### Files (all in one flat folder)
 
 | File | Role |
 |---|---|
-| `index.html` | Menu (account, mode, map, team, customize, skills, controls) and HUD |
-| `main.js` | Client: rendering, prediction/interpolation, input, keybinds, HUD logic |
-| `world.js` | Textured arena visuals per map, menu podium |
-| `textures.js` | Generates the wall, floor and lava textures |
-| `character.js` | Builds the customizable 3D character |
-| `weapon.js` | Builds the AK-style rifle and paints the skins |
-| `maps.js` | Map data: size, spawns, walls, hazards and visual theme for each map |
-| `sim.js` | Movement, raycasts, skills/models list. Used by server and client |
-| `game.js` | Room: rounds / free-for-all, hitscan, spells, bot AI |
-| `lobby.js` | Quick play placement and ranked queue |
-| `auth.js`, `store.js` | Accounts, sessions, Elo, Upstash/file storage |
-| `server.js`, `ws-lite.js` | HTTP + built-in WebSocket server (60 Hz sim, 30 Hz snapshots) |
-| `test/` | `npm test`: bot matches on every map, live WebSocket, ranked queue, accounts, lag compensation, skills, maps |
+| `index.html` | Menu and HUD |
+| `main.js` | Client: rendering, prediction, input, keybinds, HUD |
+| `world.js`, `textures.js`, `character.js`, `weapon.js` | Arena visuals, generated textures, characters, rifle |
+| `maps.js` | Map data (keep walls point-mirrored so teams stay fair) |
+| `sim.js` | Shared movement, raycasts, skills, profile rules |
+| `game.js`, `lobby.js` | Rooms, rounds, bots; Quick Play and ranked queue |
+| `auth.js`, `store.js`, `safety.js` | Accounts and Elo, Upstash/file storage, names and moderation |
+| `server.js`, `ws-lite.js` | HTTP + built-in WebSocket server (60 Hz sim, 30 Hz snapshots), admin page |
+| `test/` | `npm test`: bot matches on every map, live sockets, ranked queue, accounts, lag compensation, skills, safety |
 
-## Known limits
+### Known limits
 
-- Lag compensation rewinds enemies up to 0.4s for shots. Very high ping (over about 400ms) is still unfair.
+- Lag compensation rewinds enemies up to 0.4 s; above about 400 ms ping hits feel unfair.
 - Players do not collide with each other.
-- To add a map, add an entry to `maps.js` (keep walls point-mirrored so teams stay fair; `npm test` checks the rules).
-- Stats and the leaderboard only persist if Upstash Redis is connected on Render. Without it they reset on every restart.
 - Kills on bots give no kill stats or XP (matches and wins still do). The practice range counts nothing.
+- Stats and the leaderboard only persist with Upstash connected.

@@ -92,5 +92,32 @@ try {
   t.send(JSON.stringify({ t: 'join', name: 'x', mode: 2, map: 'olympus', token: su.token }));
   await wait(300);
   assert.ok(t.got.some((m) => m.t === 'error' && /suspended/.test(m.msg)), 'banned account cannot join');
+  // v0.9.2 hardening
+  assert.equal(r.headers.get('cross-origin-opener-policy'), 'same-origin');
+  assert.ok(r.headers.get('strict-transport-security'));
+  assert.equal((await fetch(base + '/', { method: 'POST' })).status, 405, 'static files only answer GET/HEAD');
+  for (const bad of ['__proto__', 'constructor', 'Admin_Bob', 'Owner']) {
+    const x = await (await fetch(base + '/api/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: bad, password: 'secret123' }) })).json();
+    assert.equal(x.ok, false, `reserved name ${bad} refused`);
+  }
+  // raw socket abuse: each of these must get the connection dropped, and the server must keep serving
+  const net = await import('node:net');
+  const rawWs = (frames) => new Promise((resolve) => {
+    const sock = net.connect(port, 'localhost', () => {
+      sock.write(`GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    });
+    let sent = false; let closed = false;
+    sock.on('data', (d) => { if (!sent && String(d).includes('101')) { sent = true; for (const f of frames) sock.write(f); } });
+    sock.on('close', () => { closed = true; resolve(true); });
+    sock.on('error', () => {});
+    setTimeout(() => { if (!closed) { sock.destroy(); resolve(false); } }, 1500);
+  });
+  const frame = (op, fin, payload) => { const m = Buffer.from([1, 2, 3, 4]); const p = Buffer.from(payload); for (let i = 0; i < p.length; i++) p[i] ^= m[i & 3]; return Buffer.concat([Buffer.from([(fin ? 0x80 : 0) | op, 0x80 | p.length]), m, p]); };
+  const chunk = 'x'.repeat(100);
+  assert.equal(await rawWs([frame(0x1, false, chunk), ...Array(100).fill(0).map(() => frame(0x0, false, chunk))]), true, 'endless fragmented message is cut off');
+  assert.equal(await rawWs([frame(0x9, false, 'hi')]), true, 'fragmented control frame is refused');
+  assert.equal(await rawWs([frame(0x3, true, 'hi')]), true, 'unknown opcode is refused');
+  assert.equal(await rawWs([frame(0x0, true, 'hi')]), true, 'continuation with no start is refused');
+  assert.equal((await fetch(base + '/version')).status, 200, 'server still healthy after abuse');
   console.log('safety: ok');
 } finally { srv.kill(); }

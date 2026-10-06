@@ -8,6 +8,8 @@ const scrypt = promisify(crypto.scrypt);
 export const START_RATING = 1000;
 const SESSION_TTL_SEC = 30 * 24 * 3600;
 const USER_RE = /^[A-Za-z0-9_-]{3,14}$/;
+// Names that would collide with JS object internals or look like staff; refuse them at signup.
+const RESERVED_RE = /^(__|constructor$|prototype$|hasownproperty$|tostring$|valueof$|admin|administrator$|owner$|moderator$|mod$|system$|server$|aimarena$|null$|undefined$)/i;
 const TOKEN_RE = /^[a-f0-9]{64}$/;
 
 /** Rank tier name for a rating. */
@@ -128,6 +130,7 @@ export function createAuth(store) {
       if (typeof username !== 'string' || !USER_RE.test(username)) {
         return { ok: false, error: 'Username must be 3-14 letters, digits, _ or -' };
       }
+      if (RESERVED_RE.test(username)) return { ok: false, error: 'That username is reserved' };
       if (typeof password !== 'string' || password.length < 6 || password.length > 72) {
         return { ok: false, error: 'Password must be 6-72 characters' };
       }

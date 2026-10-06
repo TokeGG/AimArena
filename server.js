@@ -40,6 +40,8 @@ function resolveFile(urlPath) {
 const store = createStore();
 const auth = createAuth(store);
 const authLimit = makeLimiter(12, 60_000); // per IP per minute
+const signupLimit = makeLimiter(6, 3_600_000); // new accounts per IP per hour (stops account-spam)
+const loginUserLimit = makeLimiter(10, 300_000); // login tries per account per 5 min (stops distributed password guessing)
 
 const mod = createModeration(store);
 
@@ -70,7 +72,10 @@ const SEC_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Strict-Transport-Security': 'max-age=31536000', // browsers ignore this over plain http, so it only bites on the https site
   'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
 };
 
@@ -178,6 +183,8 @@ async function handleApi(req, res, route) {
     if (route === '/api/signup' || route === '/api/login') {
       const body = await readJson(req);
       if (route === '/api/signup' && !nameAllowed(body.username)) return sendJson(res, 400, { ok: false, error: 'That username is not allowed' });
+      if (route === '/api/signup' && !signupLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many new accounts from this connection, try again later' });
+      if (route === '/api/login' && typeof body.username === 'string' && !loginUserLimit(body.username.toLowerCase().slice(0, 32))) return sendJson(res, 429, { ok: false, error: 'Too many tries for that account, wait a few minutes' });
       const r = await (route === '/api/signup' ? auth.signup(body.username, body.password) : auth.login(body.username, body.password));
       if (!r.ok) return sendJson(res, 400, r);
       return sendJson(res, 200, { ok: true, token: r.token, profile: profileFor(r.user) });
@@ -191,8 +198,12 @@ async function handleApi(req, res, route) {
 
 const server = http.createServer((req, res) => {
   const route = (req.url || '').split('?')[0];
+  if (!route.startsWith('/api/') && req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { Allow: 'GET, HEAD', ...SEC_HEADERS }).end('method not allowed');
+    return;
+  }
   if (route === '/version') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', ...SEC_HEADERS });
     res.end(JSON.stringify({ version: VERSION }));
     return;
   }
@@ -203,9 +214,9 @@ const server = http.createServer((req, res) => {
   }
   if (route.startsWith('/api/')) { handleApi(req, res, route); return; }
   const file = resolveFile(req.url || '/');
-  if (!file) { res.writeHead(404).end('not found'); return; }
+  if (!file) { res.writeHead(404, SEC_HEADERS).end('not found'); return; }
   fs.readFile(file, (err, data) => {
-    if (err) { res.writeHead(404).end('not found'); return; }
+    if (err) { res.writeHead(404, SEC_HEADERS).end('not found'); return; }
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
@@ -546,6 +557,17 @@ function broadcast(room) {
   }
   room.events = [];
 }
+
+// Slow-loris / oversized-header protection (WebSocket upgrades are unaffected once the handshake is done).
+server.headersTimeout = 15_000;
+server.requestTimeout = 30_000;
+server.keepAliveTimeout = 10_000;
+server.maxHeadersCount = 60;
+server.maxRequestsPerSocket = 500;
+server.on('clientError', (_err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); } catch { /* ignore */ } });
+// A bug or hostile input in one handler must never take the whole arena down.
+process.on('uncaughtException', (e) => { console.error('uncaught:', e && e.stack || e); });
+process.on('unhandledRejection', (e) => { console.error('unhandled rejection:', e && e.stack || e); });
 
 server.listen(PORT, () => {
   console.log(`Aim Arena v${VERSION} running on http://localhost:${PORT} (accounts stored in: ${store.kind})`);

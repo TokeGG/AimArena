@@ -4,6 +4,8 @@ import { EventEmitter } from 'node:events';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const MAX_PAYLOAD = 8192; // every legitimate game message is far smaller than this
+const MAX_MESSAGE = 8192; // total size of a reassembled (fragmented) message
+const MAX_BACKLOG = 512 * 1024; // terminate clients that stop reading (slow-loris / dead peers)
 
 class MiniSocket extends EventEmitter {
   constructor(socket) {
@@ -49,7 +51,10 @@ class MiniSocket extends EventEmitter {
         len = Number(b.readBigUInt64BE(2));
         off = 10;
       }
+      if (b[0] & 0x70) { this.terminate(); return; } // reserved bits: no extensions negotiated
       if (len > MAX_PAYLOAD || !masked) { this.terminate(); return; }
+      if (op >= 0x8 && (len > 125 || !fin)) { this.terminate(); return; } // control frames: <=125 bytes, never fragmented
+      if (!(op <= 0x2 || (op >= 0x8 && op <= 0xa))) { this.terminate(); return; } // unknown opcode
       if (b.length < off + 4 + len) return;
       const mask = b.subarray(off, off + 4);
       const payload = Buffer.from(b.subarray(off + 4, off + 4 + len));
@@ -64,8 +69,10 @@ class MiniSocket extends EventEmitter {
     if (op === 0x9) { this.writeFrame(0xa, payload); return; }
     if (op === 0xa) return;
     if (op === 0x1 || op === 0x2 || op === 0x0) {
-      if (op !== 0) this.frag = [];
-      if (!this.frag) return;
+      if (op !== 0) { this.frag = []; this.fragLen = 0; }
+      if (!this.frag) { this.terminate(); return; } // continuation without a start
+      this.fragLen += payload.length;
+      if (this.fragLen > MAX_MESSAGE) { this.terminate(); return; }
       this.frag.push(payload);
       if (fin) {
         const full = Buffer.concat(this.frag);
@@ -86,6 +93,7 @@ class MiniSocket extends EventEmitter {
     } else {
       h = Buffer.alloc(10); h[0] = 0x80 | op; h[1] = 127; h.writeBigUInt64BE(BigInt(len), 2);
     }
+    if (this.s.writableLength > MAX_BACKLOG) { this.terminate(); return; }
     this.s.write(Buffer.concat([h, payload]));
   }
 
@@ -96,7 +104,8 @@ class MiniSocket extends EventEmitter {
 export function attachWebSocket(httpServer, onConnection, verify) {
   httpServer.on('upgrade', (req, socket) => {
     const key = req.headers['sec-websocket-key'];
-    if (String(req.headers.upgrade).toLowerCase() !== 'websocket' || !key) { socket.destroy(); return; }
+    socket.on('error', () => {}); // never let a pre-handshake socket error crash the process
+    if (String(req.headers.upgrade).toLowerCase() !== 'websocket' || !key || String(req.headers['sec-websocket-version']) !== '13') { socket.destroy(); return; }
     if (verify && !verify(req)) { socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); socket.destroy(); return; }
     const accept = crypto.createHash('sha1').update(key + GUID).digest('base64');
     socket.write(
@@ -104,6 +113,7 @@ export function attachWebSocket(httpServer, onConnection, verify) {
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     );
     socket.setNoDelay(true);
+    socket.setTimeout(0);
     onConnection(new MiniSocket(socket), req);
   });
 }
