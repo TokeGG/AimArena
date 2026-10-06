@@ -27,7 +27,8 @@ try {
   assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(r.headers.get('x-frame-options'), 'DENY');
-  assert.equal((await fetch(base + '/admin.html')).status, 404, 'admin is a panel inside the menu now, not a page');
+  { const pg = await fetch(base + '/admin'); const t = await pg.text(); assert.equal(pg.status, 200); assert.ok(t.includes('Aim Arena Admin') && t.includes('/api/admin/log'), 'admin page is served by the server'); }
+  assert.equal((await (await fetch(base + '/api/admin/ping')).json()).enabled, true);
   assert.equal((await fetch(base + '/server.js')).status, 404, 'source files that are not served stay hidden');
 
   // admin API needs the key

@@ -127,13 +127,13 @@ The server decides everything (movement, hits, ammo, cooldowns), so a modified c
 | Browser protection | Content-Security-Policy, no framing, no MIME sniffing. |
 | Privacy | IP addresses are never stored: logs and bans use a 12-character salted hash. |
 
-### Moderating (the Admin panel in the menu)
+### Moderating (the Admin page)
 
 1. On Render add the environment variable `ADMIN_KEY` (any 12+ character secret). Optional: `TRUST_PROXY_HOPS=1`.
-2. Open your game, click **Admin** (next to Practice range), type the key, press Unlock.
+2. Click **Admin** in the menu (or go to `yourgame.onrender.com/admin`), type the key, press Unlock. The page is built into `server.js`, so there is no extra file to upload. It prints each request it makes under the key box, so problems are visible.
 3. You get: who is online (with account and address hash), the log of flags and reports, and bans. Click Ban account or Ban IP on a row, pick a duration, Ban. The player is disconnected immediately. Unban from the Bans table.
 
-Without `ADMIN_KEY` the panel says the admin is switched off and tells you what to set. The log and bans are saved in the same storage as accounts, so they only survive restarts with Upstash connected.
+Without `ADMIN_KEY` the page says the admin is switched off and tells you what to set. The log and bans are saved in the same storage as accounts, so they only survive restarts with Upstash connected.
 
 ## Rivals and sounds
 

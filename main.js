@@ -7,7 +7,7 @@ import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.8.5';
+const CLIENT_VERSION = '0.8.6';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -1161,69 +1161,8 @@ function renderDaily() {
 $('dailybtn').onclick = () => { renderDaily(); $('daily').classList.remove('hidden'); dailyTimer = setInterval(renderDaily, 30000); };
 $('dailyclose').onclick = () => { $('daily').classList.add('hidden'); clearInterval(dailyTimer); };
 
-// ------------------------------------------------------------------ admin panel (owner only; the server checks the key on every call)
-{
-  // The panel's markup lives here (not only in index.html) so a stale or mismatched page can never leave it half-built.
-  { const old = document.getElementById('admin'); if (old) old.remove(); document.body.insertAdjacentHTML('beforeend', "<div id=\"admin\" class=\"modal hidden\">\n  <div class=\"card\" style=\"width:min(960px,94vw)\">\n    <h2>ADMIN PANEL</h2>\n    <div class=\"row\"><input id=\"adkey\" type=\"password\" placeholder=\"Admin key\" autocomplete=\"off\" style=\"flex:1\"><button id=\"adgo\">Unlock</button><button id=\"adclose\">Close</button></div>\n    <div id=\"adstatus\" class=\"err\"></div>\n    <div id=\"adbody\" class=\"hidden\">\n      <div class=\"tabs row\"><button data-tab=\"online\" class=\"on\">Online</button><button data-tab=\"log\">Flags &amp; reports</button><button data-tab=\"bans\">Bans</button><button data-tab=\"ban\">Ban someone</button><button id=\"adrefresh\">&#8635; Refresh</button></div>\n      <div id=\"adt-online\" class=\"adtab\"></div>\n      <div id=\"adt-log\" class=\"adtab hidden\"></div>\n      <div id=\"adt-bans\" class=\"adtab hidden\"></div>\n      <div id=\"adt-ban\" class=\"adtab hidden\">\n        <div class=\"row\"><select id=\"adbtype\"><option value=\"user\">Account name</option><option value=\"ip\">IP hash</option></select>\n        <input id=\"adbid\" placeholder=\"name or ip hash\" style=\"flex:1\">\n        <select id=\"adbhours\"><option value=\"1\">1 hour</option><option value=\"24\">1 day</option><option value=\"168\">1 week</option><option value=\"0\">Permanent</option></select></div>\n        <div class=\"row\"><input id=\"adbreason\" placeholder=\"reason\" style=\"flex:1\"><button id=\"adbgo\">Ban</button></div>\n      </div>\n    </div>\n  </div>\n</div>"); }
-  const KEY = 'aim-admin-key';
-  const adApi = async (path, body) => {
-    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 12000);
-    try {
-      const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'x-admin-key': $('adkey').value, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: ac.signal, cache: 'no-store' });
-      const txt = await r.text();
-      try { return JSON.parse(txt); } catch { return { ok: false, error: `Server answered ${r.status} with something unexpected: ${txt.slice(0, 120)}` }; }
-    } catch (e) {
-      return { ok: false, error: e && e.name === 'AbortError' ? 'The server did not answer in 12 seconds. Try again.' : 'Could not reach the server' };
-    } finally { clearTimeout(timer); }
-  };
-  const tabShow = (name) => {
-    document.querySelectorAll('#admin .tabs [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
-    document.querySelectorAll('#admin .adtab').forEach((t) => t.classList.toggle('hidden', t.id !== `adt-${name}`));
-  };
-  const quickBtn = (type, id, label) => `<button data-qt="${type}" data-qid="${esc(id)}">${label}</button>`;
-  async function adLoad() {
-    $('adstatus').textContent = 'Loading...';
-    $('adstatus').style.color = '';
-    let d;
-    try { d = await adApi('/api/admin/log'); } catch { d = { ok: false, error: 'Could not reach the server' }; }
-    if (!d.ok) { $('adstatus').textContent = d.error || 'Failed'; $('adbody').classList.add('hidden'); return; }
-    try { sessionStorage.setItem(KEY, $('adkey').value); } catch { /* ignore */ }
-    $('adstatus').textContent = 'Unlocked.';
-    $('adstatus').style.color = '#8be28b';
-    $('adbody').classList.remove('hidden');
-    if (!Array.isArray(d.online)) d.online = [];
-    if (!Array.isArray(d.log)) d.log = [];
-    if (!Array.isArray(d.bans)) d.bans = [];
-    try {
-    $('adt-online').innerHTML = `<table><tr><th>Name</th><th>Account</th><th>IP hash</th><th>Room</th><th></th></tr>${d.online.map((o) => `<tr><td>${esc(o.name)}</td><td>${esc(o.uid || 'guest')}</td><td><code>${esc(o.ip)}</code></td><td>${esc(o.room)} (${esc(o.mode)})</td><td>${o.uid ? quickBtn('user', o.uid, 'Ban account') : ''} ${quickBtn('ip', o.ip, 'Ban IP')}</td></tr>`).join('') || '<tr><td colspan="5">Nobody online.</td></tr>'}</table>`;
-    $('adt-log').innerHTML = `<table><tr><th>When</th><th>Type</th><th>Who</th><th>IP hash</th><th>Detail</th></tr>${d.log.map((e) => `<tr><td>${esc(new Date(e.t).toLocaleString())}</td><td class="k-${esc(e.kind)} sev-${esc(e.sev || '')}">${esc(e.kind)}${e.flag ? ' / ' + esc(e.flag) : ''}${e.reason ? ' / ' + esc(e.reason) : ''}${e.sev ? ' (' + esc(e.sev) + ')' : ''}</td><td>${esc(e.who)}${e.by ? `<br><small>by ${esc(e.by)}</small>` : ''}</td><td><code>${esc(e.ip || '')}</code></td><td>${esc(e.detail || '')}</td></tr>`).join('') || '<tr><td colspan="5">Nothing flagged yet.</td></tr>'}</table>`;
-    $('adt-bans').innerHTML = `<table><tr><th>Type</th><th>Id</th><th>Until</th><th>Reason</th><th></th></tr>${d.bans.map((b) => `<tr><td>${esc(b.type)}</td><td>${esc(b.id)}</td><td>${b.until ? esc(new Date(b.until).toLocaleString()) : 'permanent'}</td><td>${esc(b.reason)}</td><td><button data-un="${esc(b.type)}|${esc(b.id)}">Unban</button></td></tr>`).join('') || '<tr><td colspan="5">No active bans.</td></tr>'}</table>`;
-    } catch (e) { $('adstatus').textContent = `Could not draw the panel: ${e && e.message}`; }
-  }
-  $('adminbtn').onclick = () => {
-    $('admin').classList.remove('hidden');
-    try { $('adkey').value = sessionStorage.getItem(KEY) || $('adkey').value; } catch { /* ignore */ }
-    if ($('adkey').value) adLoad(); else $('adkey').focus();
-  };
-  $('adclose').onclick = () => $('admin').classList.add('hidden');
-  $('adgo').onclick = adLoad;
-  $('adrefresh').onclick = adLoad;
-  $('adkey').addEventListener('keydown', (e) => { if (e.key === 'Enter') adLoad(); });
-  $('admin').addEventListener('click', async (e) => {
-    const t = e.target.closest('[data-tab]');
-    if (t) { tabShow(t.dataset.tab); return; }
-    const q = e.target.closest('[data-qt]');
-    if (q) { $('adbtype').value = q.dataset.qt; $('adbid').value = q.dataset.qid; tabShow('ban'); $('adbreason').focus(); return; }
-    const un = e.target.closest('[data-un]');
-    if (un) { const [ty, id] = un.dataset.un.split('|'); await adApi('/api/admin/unban', { type: ty, id }); adLoad(); }
-  });
-  $('adbgo').onclick = async () => {
-    const r = await adApi('/api/admin/ban', { type: $('adbtype').value, id: $('adbid').value.trim(), hours: Number($('adbhours').value), reason: $('adbreason').value });
-    $('adstatus').textContent = r.ok ? 'Banned.' : (r.error || 'Failed');
-    if (r.ok) { $('adbid').value = ''; $('adbreason').value = ''; adLoad().then(() => { $('adstatus').textContent = 'Banned.'; }); }
-  };
-  if (location.hash === '#admin') $('adminbtn').click();
-}
+// Admin is its own page (/admin), served by the server itself.
+$('adminbtn').onclick = () => { location.href = '/admin'; };
 
 $('profbtn').onclick = () => { renderProfile(); $('prof').classList.remove('hidden'); };
 $('profclose').onclick = () => $('prof').classList.add('hidden');

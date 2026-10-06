@@ -501,25 +501,6 @@
 
 <div id="toast" class="hidden"></div>
 
-<div id="admin" class="modal hidden">
-  <div class="card" style="width:min(960px,94vw)">
-    <h2>ADMIN PANEL</h2>
-    <div class="row"><input id="adkey" type="password" placeholder="Admin key" autocomplete="off" style="flex:1"><button id="adgo">Unlock</button><button id="adclose">Close</button></div>
-    <div id="adstatus" class="err"></div>
-    <div id="adbody" class="hidden">
-      <div class="tabs row"><button data-tab="online" class="on">Online</button><button data-tab="log">Flags &amp; reports</button><button data-tab="bans">Bans</button><button data-tab="ban">Ban someone</button><button id="adrefresh">&#8635; Refresh</button></div>
-      <div id="adt-online" class="adtab"></div>
-      <div id="adt-log" class="adtab hidden"></div>
-      <div id="adt-bans" class="adtab hidden"></div>
-      <div id="adt-ban" class="adtab hidden">
-        <div class="row"><select id="adbtype"><option value="user">Account name</option><option value="ip">IP hash</option></select>
-        <input id="adbid" placeholder="name or ip hash" style="flex:1">
-        <select id="adbhours"><option value="1">1 hour</option><option value="24">1 day</option><option value="168">1 week</option><option value="0">Permanent</option></select></div>
-        <div class="row"><input id="adbreason" placeholder="reason" style="flex:1"><button id="adbgo">Ban</button></div>
-      </div>
-    </div>
-  </div>
-</div>
 
 <div id="daily" class="modal hidden">
   <div class="card">
