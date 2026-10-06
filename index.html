@@ -289,6 +289,54 @@
   #admin .tabs button.on { border-color:var(--gold); color:var(--gold); } #admin .adtab { max-height:52vh; overflow:auto; margin-top:6px; }
   #admin .sev-kick, #admin .k-ban { color:#ff6a5a; } #admin .sev-flag { color:#ffc24a; } #admin .k-report { color:#6fc3ff; }
   #adminbtn { opacity:.7; }
+
+  /* ================= MENU + PAUSE REDESIGN (v0.8) ================= */
+  #side { width:min(620px,100vw); padding:26px 30px 30px; border-right:1px solid rgba(226,184,74,.28);
+    background:radial-gradient(120% 60% at 0% 0%, rgba(226,184,74,.10), transparent 60%), linear-gradient(90deg, rgba(16,12,7,.97) 0%, rgba(18,13,8,.93) 82%, rgba(18,13,8,0) 100%); }
+  #logo { font-size:46px; line-height:1; letter-spacing:.2em; background:linear-gradient(180deg,#fff2c4,#e2b84a 55%,#a77d1f); -webkit-background-clip:text; background-clip:text; color:transparent; text-shadow:none; filter:drop-shadow(0 3px 0 rgba(90,66,16,.9)); }
+  #logo span { background:linear-gradient(180deg,#ffffff,#d9d2c0); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { margin:8px 0 18px; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); }
+  .sec { background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02)); border:1px solid rgba(226,184,74,.22); border-radius:16px; padding:6px 18px 18px; margin-bottom:14px; box-shadow:0 8px 24px rgba(0,0,0,.28); }
+  .sec h3 { display:flex; align-items:center; gap:8px; margin:16px 0 9px; font-size:11px; letter-spacing:.2em; }
+  .sec h3::after { content:''; flex:1; height:1px; background:linear-gradient(90deg, rgba(226,184,74,.35), transparent); }
+  .stepn { display:inline-flex; width:20px; height:20px; border-radius:50%; align-items:center; justify-content:center; background:var(--gold); color:#2b1d03; font-size:12px; letter-spacing:0; }
+  .row { gap:8px; }
+  .modes button, .teams button { padding:12px 8px; font-weight:700; letter-spacing:.04em; border-radius:10px; }
+  .modes button.on { color:#2b1d03; background:linear-gradient(180deg,#f6d374,#d3a232); border-color:#fff0b8; box-shadow:0 0 16px rgba(226,184,74,.35); }
+  .teams button[data-team="-1"].on { color:#2b1d03; background:linear-gradient(180deg,#f6d374,#d3a232); border-color:#fff0b8; }
+  .teams button[data-team="0"] { border-bottom:3px solid rgba(59,130,255,.7); } .teams button[data-team="1"] { border-bottom:3px solid rgba(255,84,54,.7); }
+  .maps { gap:10px; }
+  .mapcard { position:relative; border-radius:12px; border:1px solid rgba(226,184,74,.25); background:rgba(0,0,0,.28); transition:transform .12s, border-color .12s, box-shadow .12s; }
+  .mapcard:hover { transform:translateY(-2px); }
+  .mapcard .sw { height:46px; }
+  .mapcard b { font-size:14px; letter-spacing:.02em; }
+  .mapcard.on { border-color:var(--gold); box-shadow:0 0 0 1px var(--gold), 0 6px 22px rgba(226,184,74,.28); }
+  .mapcard.on::after { content:'\2713'; position:absolute; top:7px; right:8px; width:20px; height:20px; border-radius:50%; background:var(--gold); color:#2b1d03; font-weight:900; font-size:13px; display:flex; align-items:center; justify-content:center; }
+  .slot { border-radius:14px; }
+  .spellcard { border-radius:12px; }
+  .optgrid { display:grid; grid-template-columns:auto 1fr 1fr; gap:16px; align-items:end; }
+  .hub { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:6px; }
+  .hub button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; padding:14px 6px; font-size:12px; font-weight:700; letter-spacing:.04em; border-radius:12px; background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025)); }
+  .hub button i { font-style:normal; font-size:22px; line-height:1; }
+  #adminbtn { opacity:.6; }
+  #foot { margin:14px -30px -30px; padding:16px 30px 20px; background:linear-gradient(0deg, rgba(14,10,5,.99) 62%, rgba(14,10,5,0)); }
+  #foot .row { gap:12px; }
+  .playbtn { padding:16px 12px; font-size:19px; border-radius:12px; }
+  .keys { margin-top:12px; font-size:11px; opacity:.85; }
+  #acct { border-radius:14px; background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.25)); padding:10px 12px; margin-bottom:12px; }
+
+  /* pause menu: one tidy column */
+  .pausecard { width:min(380px,92vw); padding:28px 28px 26px; border-radius:18px; background:linear-gradient(180deg, rgba(34,26,14,.96), rgba(16,12,7,.97)); border:1px solid rgba(226,184,74,.4); box-shadow:0 20px 60px rgba(0,0,0,.6); }
+  .pausecard .title { font-size:30px; letter-spacing:.24em; }
+  .pausecard .sub { text-transform:none; letter-spacing:.04em; margin:6px 0 20px; font-size:13px; }
+  .pstack { display:flex; flex-direction:column; gap:10px; }
+  .pstack > button { width:100%; margin:0; padding:13px 14px; font-weight:700; letter-spacing:.04em; border-radius:11px; }
+  .pstack .primary { margin:0; font-size:18px; letter-spacing:.16em; padding:15px; border-radius:12px; box-shadow:0 4px 0 #7a5a12, 0 8px 20px rgba(0,0,0,.4); }
+  .pgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .pgrid button { margin:0; padding:13px 8px; font-weight:700; border-radius:11px; }
+  .pstack .danger { color:#ffb3a6; border-color:rgba(255,110,90,.5); background:rgba(255,84,54,.1); }
+  .pstack .danger:hover { background:rgba(255,84,54,.28); border-color:#ff7a62; color:#fff; }
+  @media (max-width:700px) { .optgrid { grid-template-columns:1fr; } .hub { grid-template-columns:repeat(2,1fr); } #side { padding:20px 16px 24px; } #foot { margin:14px -16px -24px; padding:14px 16px 18px; } }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
@@ -328,40 +376,55 @@
 
     <div id="acct"></div>
     <div id="persist" class="hidden">Accounts are only saved temporarily until the server database is connected.</div>
-    <div class="guestonly" id="nameblock"><h3>Name</h3>
-    <input id="name" type="text" maxlength="14" autocomplete="off"></div>
 
-    <h3>Mode</h3>
-    <div class="row"><button id="m2">2 v 2</button><button id="m3">3 v 3</button><button id="mffa">Free-for-all</button></div>
-    <div id="ffa-note" class="hidden">8 players, every player for themselves. Respawn after 3s. First to 20 kills (or best score after 5 minutes) wins. Not ranked.</div>
+    <section class="sec">
+      <div class="guestonly" id="nameblock"><h3>Name</h3>
+      <input id="name" type="text" maxlength="14" autocomplete="off"></div>
 
-    <h3>Map</h3>
-    <div class="maps" id="mappick"></div>
+      <h3>Mode</h3>
+      <div class="row modes"><button id="m2">2 v 2</button><button id="m3">3 v 3</button><button id="mffa">Free-for-all</button></div>
+      <div id="ffa-note" class="hidden">8 players, every player for themselves. Respawn after 3s. First to 20 kills (or best score after 5 minutes) wins. Not ranked.</div>
 
-    <div id="teamblock"><h3>Team</h3>
-    <div class="row teams" id="teampick">
-      <button data-team="-1">Auto</button><button data-team="0">Blue</button><button data-team="1">Red</button>
-    </div></div>
+      <h3>Map</h3>
+      <div class="maps" id="mappick"></div>
 
-    <h3>1 &middot; Your character</h3>
-    <div class="charcard"><div id="charsum"></div><button id="customizebtn">Customize</button></div>
-    <div class="hint">Everyone has the same health and speed. Your look is just for style.</div>
+      <div id="teamblock"><h3>Team</h3>
+      <div class="row teams" id="teampick">
+        <button data-team="-1">Auto</button><button data-team="0">Blue</button><button data-team="1">Red</button>
+      </div></div>
+    </section>
 
-    <h3>2 &middot; Pick 3 skills</h3>
-    <div class="slots" id="slots"></div>
-    <div class="hint">Click a skill below to fill the next free slot. Click a filled slot to remove it.</div>
-    <div class="spells" id="spellpick" style="margin-top:10px"></div>
+    <section class="sec">
+      <h3><b class="stepn">1</b> Your character</h3>
+      <div class="charcard"><div id="charsum"></div><button id="customizebtn">Customize</button></div>
+      <div class="hint">Everyone has the same health and speed. Your look is just for style.</div>
+    </section>
 
-    <h3>Options</h3>
-    <div class="row">
-      <div><div class="hint" style="margin:0 0 4px">Graphics</div><div class="row"><button id="qh">High</button><button id="ql">Fast</button></div></div>
-      <div><div class="hint" style="margin:0 0 4px">Sensitivity <span id="sensv"></span></div><input id="sens" type="range" min="0.2" max="3" step="0.05"></div>
-      <div><div class="hint" style="margin:0 0 4px">Volume <span id="volv"></span></div><input id="vol" type="range" min="0" max="1" step="0.05"></div>
+    <section class="sec">
+      <h3><b class="stepn">2</b> Pick 3 skills</h3>
+      <div class="slots" id="slots"></div>
+      <div class="hint">Click a skill below to fill the next free slot. Click a filled slot to remove it.</div>
+      <div class="spells" id="spellpick" style="margin-top:10px"></div>
+    </section>
+
+    <section class="sec">
+      <h3>Options</h3>
+      <div class="optgrid">
+        <div><div class="hint" style="margin:0 0 4px">Graphics</div><div class="row"><button id="qh">High</button><button id="ql">Fast</button></div></div>
+        <div><div class="hint" style="margin:0 0 4px">Sensitivity <span id="sensv"></span></div><input id="sens" type="range" min="0.2" max="3" step="0.05"></div>
+        <div><div class="hint" style="margin:0 0 4px">Volume <span id="volv"></span></div><input id="vol" type="range" min="0" max="1" step="0.05"></div>
+      </div>
+      <div class="row" style="margin-top:12px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
+    </section>
+
+    <div class="hub">
+      <button id="watchbtn"><i>&#128065;</i>Watch live</button>
+      <button id="lbbtn"><i>&#127942;</i>Leaderboard</button>
+      <button id="profbtn"><i>&#128100;</i>Profile</button>
+      <button id="dailybtn"><i>&#128197;</i>Daily challenges</button>
+      <button id="rangebtn"><i>&#127919;</i>Practice range</button>
+      <button id="adminbtn"><i>&#128737;</i>Admin</button>
     </div>
-    <div class="row" style="margin-top:10px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
-
-    <div class="row" style="margin-top:10px"><button id="watchbtn">&#128065; Watch live games</button><button id="lbbtn">&#127942; Leaderboard</button><button id="profbtn">&#128100; Profile</button><button id="dailybtn">&#128197; Daily challenges</button></div>
-    <div class="row" style="margin-top:8px"><button id="rangebtn">&#127919; Practice range <small style="color:var(--dim)">solo target practice</small></button><button id="adminbtn" style="flex:0 0 auto">&#128737; Admin</button></div>
     <div id="foot">
       <div class="row">
         <button id="quick" class="playbtn">QUICK PLAY<small>jump straight in</small></button>
@@ -499,10 +562,15 @@
 </div>
 
 <div id="pause" class="overlay hidden">
-  <div class="card">
+  <div class="card pausecard">
     <h1 class="title" id="pausetitle">PAUSED</h1>
     <p class="sub" id="pausesub">The match keeps running on the server.</p>
-    <div class="row"><button id="resume" class="primary">RESUME</button><button id="controlsbtn2" style="margin-top:10px">Keybinds</button><button id="xhbtn2" style="margin-top:10px">Crosshair</button><button id="reportbtn" style="margin-top:10px">Report a player</button><button id="leave" style="margin-top:10px">Leave match</button></div>
+    <div class="pstack">
+      <button id="resume" class="primary">RESUME</button>
+      <div class="pgrid"><button id="controlsbtn2">&#9000; Keybinds</button><button id="xhbtn2">&#10010; Crosshair</button></div>
+      <button id="reportbtn">&#9873; Report a player</button>
+      <button id="leave" class="danger">Leave match</button>
+    </div>
   </div>
 </div>
 
