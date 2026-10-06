@@ -1,7 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.6.0'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.7.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
@@ -252,6 +252,7 @@ export const LOOK_PARTS = {
   shoulder: ['None', 'Pauldrons', 'Spikes', 'Mantle', 'Orbs', 'Crystals'],
   back: ['None', 'Jetpack', 'Cape', 'Cables', 'Fins', 'Halo', 'Wings'],
   mat: ['Alloy', 'Brushed steel', 'Carbon weave', 'Hex plating', 'Camo', 'Molten', 'Gilded', 'Void'],
+  gun: ['Classic AK', 'Redline', 'Jungle Camo', 'Wasteland', 'Frostbite', 'Neon Grid', 'Inferno', 'Toxic', 'Gilded', 'Void Prism'], // rifle skin, seen by everyone
   fx: ['Burst', 'Embers', 'Frost shatter', 'Lightning', 'Confetti', 'Ghost rise', 'Gold coins', 'Void collapse'], // what everyone sees when YOU get a kill
 };
 export const LOOK_PALETTES = {
@@ -260,7 +261,7 @@ export const LOOK_PALETTES = {
   glow: ['#35e0ff', '#7dff6a', '#ff8a1f', '#ff3b5c', '#c27bff', '#ffe14a', '#ffffff', '#4a8bff'],
 };
 const HEX = /^#[0-9a-f]{6}$/i;
-export const DEFAULT_LOOK = { model: 'striker', helm: 0, shoulder: 1, back: 1, mat: 0, fx: 0, c1: '#8c939f', c2: '#3a3f4a', glow: '#35e0ff' };
+export const DEFAULT_LOOK = { model: 'striker', helm: 0, shoulder: 1, back: 1, mat: 0, fx: 0, gun: 0, c1: '#8c939f', c2: '#3a3f4a', glow: '#35e0ff' };
 const intIn = (v, n, d) => (Number.isInteger(v) && v >= 0 && v < n ? v : d);
 /** Any input -> a complete, valid look. */
 export function sanitizeLook(raw) {
@@ -273,18 +274,19 @@ export function sanitizeLook(raw) {
     back: intIn(r.back, LOOK_PARTS.back.length, D.back),
     mat: intIn(r.mat, LOOK_PARTS.mat.length, D.mat),
     fx: intIn(r.fx, LOOK_PARTS.fx.length, D.fx),
+    gun: intIn(r.gun, LOOK_PARTS.gun.length, D.gun),
     c1: typeof r.c1 === 'string' && HEX.test(r.c1) ? r.c1.toLowerCase() : D.c1,
     c2: typeof r.c2 === 'string' && HEX.test(r.c2) ? r.c2.toLowerCase() : D.c2,
     glow: typeof r.glow === 'string' && HEX.test(r.glow) ? r.glow.toLowerCase() : D.glow,
   };
 }
-/** Compact string sent in every snapshot: "helm,shoulder,back,mat,c1,c2,glow,fx" (hex without #). */
-export const encodeLook = (l) => `${l.helm},${l.shoulder},${l.back},${l.mat},${l.c1.slice(1)},${l.c2.slice(1)},${l.glow.slice(1)},${l.fx}`;
+/** Compact string sent in every snapshot: "helm,shoulder,back,mat,c1,c2,glow,fx,gun" (hex without #). */
+export const encodeLook = (l) => `${l.helm},${l.shoulder},${l.back},${l.mat},${l.c1.slice(1)},${l.c2.slice(1)},${l.glow.slice(1)},${l.fx},${l.gun}`;
 export function decodeLook(model, str) {
   const p = String(str || '').split(',');
   return sanitizeLook({
     model, helm: Number(p[0]), shoulder: Number(p[1]), back: Number(p[2]), mat: Number(p[3]),
-    c1: `#${p[4] || ''}`, c2: `#${p[5] || ''}`, glow: `#${p[6] || ''}`, fx: Number(p[7]),
+    c1: `#${p[4] || ''}`, c2: `#${p[5] || ''}`, glow: `#${p[6] || ''}`, fx: Number(p[7]), gun: Number(p[8]),
   });
 }
 export function randomLook(rnd = Math.random) {
@@ -292,7 +294,7 @@ export function randomLook(rnd = Math.random) {
   return sanitizeLook({
     model: pick(Object.keys(MODELS)),
     helm: Math.floor(rnd() * LOOK_PARTS.helm.length), shoulder: Math.floor(rnd() * LOOK_PARTS.shoulder.length),
-    back: Math.floor(rnd() * LOOK_PARTS.back.length), mat: Math.floor(rnd() * LOOK_PARTS.mat.length), fx: Math.floor(rnd() * LOOK_PARTS.fx.length),
+    back: Math.floor(rnd() * LOOK_PARTS.back.length), mat: Math.floor(rnd() * LOOK_PARTS.mat.length), fx: Math.floor(rnd() * LOOK_PARTS.fx.length), gun: Math.floor(rnd() * LOOK_PARTS.gun.length),
     c1: pick(LOOK_PALETTES.c1), c2: pick(LOOK_PALETTES.c2), glow: pick(LOOK_PALETTES.glow),
   });
 }
@@ -306,6 +308,7 @@ export const LOOK_UNLOCK = {
   back: [1, 1, 3, 7, 11, 16, 27],
   mat: [1, 1, 4, 7, 10, 14, 20, 26],
   fx: [1, 3, 6, 9, 12, 16, 20, 25],
+  gun: [1, 2, 4, 6, 8, 11, 14, 17, 20, 24],
 };
 /** Level for an XP total: 60 xp -> 2, 240 -> 3, 540 -> 4 ... */
 export const levelFor = (xp) => Math.min(MAX_LEVEL, 1 + Math.floor(Math.sqrt(Math.max(0, xp || 0) / 60)));

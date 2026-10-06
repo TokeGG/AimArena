@@ -3,10 +3,11 @@ import {
   DT, EYE_H, eyeH, FIRE_INTERVAL, LOOK_UNLOCK, levelFor, xpForLevel, clampLook, MAX_LEVEL, LOADOUT_BUDGET, loadoutCost, AMMO_START, AMMO_KILL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL, BODY_DMG, HEAD_DMG,
   MOVE_SPEED, VERSION, dayKey, dailyFor, msUntilDailyReset, MAPS, LOOK_PARTS, LOOK_PALETTES, DEFAULT_LOOK, sanitizeLook, randomLook, decodeLook, encodeLook, MAP_IDS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, useMap, stepPlayer, lookDir, rayWorld, spawnPoint,
 } from '/sim.js';
+import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.6.0';
+const CLIENT_VERSION = '0.7.0';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -399,7 +400,7 @@ const myLevel = () => (account ? levelFor(account.xp || 0) : 1);
 const effLook = () => clampLook(cfg.look, myLevel());
 
 // ------------------------------------------------------------------ customizer
-const LOOK_GROUPS = [['helm', 'Helmet'], ['shoulder', 'Shoulders'], ['back', 'Back piece'], ['mat', 'Material'], ['fx', 'Kill effect']];
+const LOOK_GROUPS = [['helm', 'Helmet'], ['shoulder', 'Shoulders'], ['back', 'Back piece'], ['mat', 'Material'], ['gun', 'Rifle skin'], ['fx', 'Kill effect']];
 const COLOR_GROUPS = [['c1', 'Primary colour'], ['c2', 'Secondary colour'], ['glow', 'Glow colour']];
 function renderCharSum() {
   const l = effLook();
@@ -559,18 +560,24 @@ const gunLight = new THREE.DirectionalLight(0xffffff, 1.2);
 gunLight.position.set(1, 2, 2);
 gunScene.add(gunLight);
 const gun = new THREE.Group();
-{
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.5), new THREE.MeshStandardMaterial({ color: 0x20263d, roughness: 0.5, metalness: 0.4 }));
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.084, 0.02, 0.3), new THREE.MeshBasicMaterial({ color: 0xe2b84a }));
-  stripe.position.set(0, 0.055, -0.05);
-  const flash = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffe9a0 }));
-  flash.position.set(0, 0, -0.32);
-  flash.visible = false;
-  gun.add(body, stripe, flash);
-  gun.position.set(0.22, -0.2, -0.5);
-  gun.userData.flash = flash;
-  gunScene.add(gun);
+const GUN_X = 0.19, GUN_Y = -0.17, GUN_Z = -0.45, GUN_SCALE = 0.7; // viewmodel placement: tune here
+gun.position.set(GUN_X, GUN_Y, GUN_Z);
+gun.rotation.y = 0.03;
+gunScene.add(gun);
+let gunKey = '', gunRifle = null;
+/** (Re)build the first-person AK in the skin you wear. */
+function setViewGun(look) {
+  const key = `${look.gun}|${look.glow}`;
+  if (key === gunKey) return;
+  gunKey = key;
+  if (gunRifle) gun.remove(gunRifle);
+  const rifle = buildRifle(look.gun, look.glow, { flash: true });
+  rifle.scale.setScalar(GUN_SCALE);
+  gun.add(rifle);
+  gunRifle = rifle;
+  gun.userData.flash = rifle.userData.flash;
 }
+setViewGun(effLook());
 function drawFrame(showGun) {
   renderer.clear();
   renderer.render(scene, camera);
@@ -582,8 +589,6 @@ function drawFrame(showGun) {
 
 // ------------------------------------------------------------------ entities
 const ents = new Map();
-const gunGeo = new THREE.BoxGeometry(0.1, 0.12, 0.6);
-const darkMat = new THREE.MeshStandardMaterial({ color: 0x15192b, roughness: 0.5 });
 const shieldGeo = new THREE.SphereGeometry(1.15, 20, 14);
 const auraGeo = new THREE.SphereGeometry(0.95, 16, 12);
 const glowMat = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
@@ -618,9 +623,10 @@ function makeEntity(pd) {
   }
   sheep.visible = false;
   group.add(sheep);
-  const g = new THREE.Mesh(gunGeo, darkMat);
-  g.position.set(0.3, 1.0, -0.4);
-  g.castShadow = true;
+  const lk = decodeLook(pd.md, pd.lk);
+  const g = buildRifle(lk.gun, lk.glow, { shadow: true });
+  g.scale.setScalar(0.72);
+  g.position.set(0.3, 1.02, -0.3);
   group.add(g);
   const shield = new THREE.Mesh(shieldGeo, new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.22, depthWrite: false }));
   shield.position.y = 0.9;
@@ -994,7 +1000,7 @@ function wsHandler(e) {
       inFfa = m.mode === 'ffa'; inRange = !!m.range; yawInit = false; showroom.visible = false;
       document.body.classList.toggle('range', inRange);
       rs = { shots: 0, hits: 0, heads: 0, kills: 0 };
-      gun.children[1].material.color.set((m.look && m.look.glow) || cfg.look.glow);
+      setViewGun(m.look ? sanitizeLook(m.look) : effLook());
       ranked = !!m.ranked; meModel = m.model || meModel; myRating = m.rating;
       enterMap(m.map);
       me.speed = (MODELS[m.model] || MODELS[DEFAULT_MODEL]).speed;
@@ -1059,7 +1065,7 @@ function renderProfile() {
   const pct = lv >= MAX_LEVEL ? 100 : Math.round(((a.xp - lo) / (hi - lo)) * 100);
   const kd = a.deaths ? (a.kills / a.deaths).toFixed(2) : String(a.kills || 0);
   const next = [];
-  for (const [k, label] of [['helm', 'Helmet'], ['shoulder', 'Shoulders'], ['back', 'Back'], ['mat', 'Material'], ['fx', 'Kill effect']]) {
+  for (const [k, label] of [['helm', 'Helmet'], ['shoulder', 'Shoulders'], ['back', 'Back'], ['mat', 'Material'], ['gun', 'Rifle skin'], ['fx', 'Kill effect']]) {
     LOOK_UNLOCK[k].forEach((req, i) => { if (req === lv + 1) next.push(LOOK_PARTS[k][i]); });
   }
   box.innerHTML = `<div class="who"><b>${esc(a.username)}</b><span class="rankpill">${esc(a.rank)}</span></div>
@@ -1607,7 +1613,8 @@ function render(dt, now) {
     seen.add(pd.id);
     if (pd.hid) { const h = ents.get(pd.id); if (h) h.group.visible = false; continue; } // server hides enemies you cannot see
     let ent = ents.get(pd.id);
-    const lkKey = lookKey(decodeLook(pd.md, pd.lk));
+    const pLook = decodeLook(pd.md, pd.lk);
+    const lkKey = `${lookKey(pLook)}|${pLook.gun}`;
     if (ent && ent.lkKey !== lkKey) { scene.remove(ent.group); ents.delete(pd.id); ent = null; }
     if (!ent) { ent = makeEntity(pd); ent.lkKey = lkKey; ents.set(pd.id, ent); }
     if (pd.id === myId && !kc) { ent.group.visible = false; continue; }
@@ -1680,7 +1687,7 @@ function render(dt, now) {
   // viewmodel recoil + muzzle flash
   kick = Math.max(0, kick - dt * 0.5);
   flashT = Math.max(0, flashT - dt);
-  gun.position.z = -0.5 + kick * 2;
+  gun.position.z = GUN_Z + kick * 2;
   gun.userData.flash.visible = flashT > 0;
 
   animateZones(now);

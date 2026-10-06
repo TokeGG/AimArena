@@ -26,7 +26,7 @@ const MIME = {
 };
 
 // Only these files are ever served (everything lives in one folder, no subfolders).
-const STATIC_FILES = new Set(['admin.html', 'index.html', 'main.js', 'world.js', 'sim.js', 'maps.js', 'textures.js', 'character.js']);
+const STATIC_FILES = new Set(['admin.html', 'index.html', 'main.js', 'world.js', 'sim.js', 'maps.js', 'textures.js', 'character.js', 'weapon.js']);
 
 function resolveFile(urlPath) {
   let p;

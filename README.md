@@ -140,6 +140,10 @@ Without `ADMIN_KEY` the admin API does not exist. The log and bans are saved in 
 - New parts: Crown helm Lv18, Skull mask Lv22, Orbs Lv15, Crystals Lv24, Halo Lv16, Wings Lv27, Gilded material Lv20, Void material Lv26.
 - Daily challenges (menu button): 3 per day (easy / medium / hard) paying 40 / 70 / 110 XP. Same for everyone, reset at midnight US Central. Kills and damage on bots do not count, and matches only count with 2+ real players. Needs a signed-in account.
 
+## Rifle and skins
+
+Everyone carries an AK-style rifle (built from simple shapes, no downloads). The **Rifle skin** row in the customizer picks a paint job; other players see it on your gun too, and the menu podium previews it. Unlock levels: Classic AK (free), Redline Lv2, Jungle Camo Lv4, Wasteland Lv6, Frostbite Lv8, Neon Grid Lv11, Inferno Lv14, Toxic Lv17, Gilded Lv20, Void Prism Lv24. Neon Grid uses your glow colour; the small strip on top of the rifle always uses it. Skins are cosmetic only. To tune where the rifle sits on screen, edit `GUN_X`, `GUN_Y`, `GUN_Z`, `GUN_SCALE` near the top of the viewmodel block in `main.js`.
+
 ## Levels, unlocks, leaderboard, practice range
 
 - XP: +5 per enemy kill, +40 per finished match, +60 for a win. Level = 1 + floor(sqrt(XP / 60)), max 30.
@@ -156,6 +160,7 @@ Without `ADMIN_KEY` the admin API does not exist. The log and bans are saved in 
 | `world.js` | Textured arena visuals per map, menu podium |
 | `textures.js` | Generates the wall, floor and lava textures |
 | `character.js` | Builds the customizable 3D character |
+| `weapon.js` | Builds the AK-style rifle and paints the skins |
 | `maps.js` | Map data: size, spawns, walls, hazards and visual theme for each map |
 | `sim.js` | Movement, raycasts, skills/models list. Used by server and client |
 | `game.js` | Room: rounds / free-for-all, hitscan, spells, bot AI |

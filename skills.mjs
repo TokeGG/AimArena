@@ -1,7 +1,7 @@
 // Unit tests for the status-effect skills, using two hand-placed players.
 import assert from 'node:assert/strict';
 import { Room } from '../game.js';
-import { levelFor, xpForLevel, clampLook, unlocksAt, LOOK_UNLOCK, DEFAULT_LOOK, loadoutCost, LOADOUT_BUDGET, SPELLS, stepPlayer, DT, EYE_H, MODELS, sanitizeLook, randomLook, encodeLook, decodeLook } from '../sim.js';
+import { LOOK_PARTS, levelFor, xpForLevel, clampLook, unlocksAt, LOOK_UNLOCK, DEFAULT_LOOK, loadoutCost, LOADOUT_BUDGET, SPELLS, stepPlayer, DT, EYE_H, MODELS, sanitizeLook, randomLook, encodeLook, decodeLook } from '../sim.js';
 
 function setup(loadout, model = 'striker') {
   const room = new Room(2);
@@ -114,11 +114,20 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   assert.equal(p.maxHp, 150);
   // look sanitising: garbage in, valid look out
   const bad = sanitizeLook({ model: 'nope', helm: 99, shoulder: -1, back: 'x', mat: 1.5, c1: 'red', c2: '#GGGGGG', glow: '#ABCDEF' });
-  assert.deepEqual(bad, { model: 'striker', helm: 0, shoulder: 1, back: 1, mat: 0, fx: 0, c1: '#8c939f', c2: '#3a3f4a', glow: '#abcdef' });
+  assert.deepEqual(bad, { model: 'striker', helm: 0, shoulder: 1, back: 1, mat: 0, fx: 0, gun: 0, c1: '#8c939f', c2: '#3a3f4a', glow: '#abcdef' });
   for (let i = 0; i < 200; i++) {
     const l = randomLook();
     assert.deepEqual(decodeLook(l.model, encodeLook(l)), l);
   }
+  // rifle skins: 10 of them, level-gated, tolerated when an older client omits the field
+  assert.equal(LOOK_PARTS.gun.length, 10);
+  assert.equal(LOOK_UNLOCK.gun.length, LOOK_PARTS.gun.length);
+  assert.equal(clampLook({ gun: 9 }, 5).gun, 0, 'level 24 skin must be locked at level 5');
+  assert.equal(clampLook({ gun: 9 }, 24).gun, 9);
+  assert.equal(clampLook({ gun: 1 }, 1).gun, 0, 'guests only get the classic AK');
+  assert.equal(decodeLook('striker', '0,1,1,0,8c939f,3a3f4a,35e0ff,0').gun, 0, 'old 8-field looks still decode');
+  assert.equal(decodeLook('striker', '0,1,1,0,8c939f,3a3f4a,35e0ff,0,7').gun, 7);
+  assert.equal(sanitizeLook({ gun: 99 }).gun, 0);
   assert.deepEqual(decodeLook('phantom', 'garbage'), sanitizeLook({ model: 'phantom' }));
 }
 
@@ -461,7 +470,7 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   assert.equal(levelFor(0), 1); assert.equal(levelFor(59), 1); assert.equal(levelFor(60), 2); assert.equal(levelFor(240), 3);
   assert.equal(levelFor(1e9), 30);
   for (let lv = 2; lv <= 30; lv++) assert.equal(levelFor(xpForLevel(lv)), lv);
-  const all = { model: 'phantom', helm: 7, shoulder: 5, back: 6, mat: 7, fx: 7, c1: '#112233', c2: '#445566', glow: '#778899' };
+  const all = { model: 'phantom', helm: 7, shoulder: 5, back: 6, mat: 7, fx: 7, gun: 9, c1: '#112233', c2: '#445566', glow: '#778899' };
   const l1 = clampLook(all, 1);
   assert.deepEqual([l1.helm, l1.shoulder, l1.back, l1.mat, l1.fx], [DEFAULT_LOOK.helm, DEFAULT_LOOK.shoulder, DEFAULT_LOOK.back, DEFAULT_LOOK.mat, DEFAULT_LOOK.fx]);
   assert.equal(clampLook(all, 24).fx, 0, 'Void collapse needs level 25');

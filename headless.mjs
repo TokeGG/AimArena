@@ -113,8 +113,8 @@ try {
   const meP = end.p.find((p) => !p.b);
   assert.equal(meP.md, 'phantom');
   assert.equal(meP.mh, 150, 'every character has the same health');
-  assert.equal(meP.lk, '1,0,1,1,ff0000,00ff00,0000ff,0', 'look not carried to the snapshot (back 2 needs level 3 so guests get the default: 1)');
-  assert.ok(end.p.filter((p) => p.b).every((p) => typeof p.lk === 'string' && p.lk.split(',').length === 8), 'bots need looks too');
+  assert.equal(meP.lk, '1,0,1,1,ff0000,00ff00,0000ff,0,0', 'look not carried to the snapshot (back 2 needs level 3 so guests get the default: 1)');
+  assert.ok(end.p.filter((p) => p.b).every((p) => typeof p.lk === 'string' && p.lk.split(',').length === 9), 'bots need looks too');
   assert.deepEqual(welcome.look.c1, '#ff0000');
   assert.ok(Array.isArray(end.zn), 'snapshot missing zones');
   assert.equal(end.me.cd.length, 3);
