@@ -4,10 +4,10 @@ import {
   MOVE_SPEED, VERSION, dayKey, dailyFor, msUntilDailyReset, MAPS, LOOK_PARTS, LOOK_PALETTES, DEFAULT_LOOK, sanitizeLook, randomLook, decodeLook, encodeLook, MAP_IDS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, useMap, stepPlayer, lookDir, rayWorld, spawnPoint,
 } from '/sim.js';
 import { buildRifle } from '/weapon.js';
-import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
+import { TEAM_COLOR, buildWorld, buildShowroom, placeShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.8.6';
+const CLIENT_VERSION = '0.8.7';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -37,6 +37,7 @@ if (!TEAM_MAP_IDS.includes(cfg.map)) cfg.map = DEFAULT_MAP;
 if (!FFA_MAP_IDS.includes(cfg.ffaMap)) cfg.ffaMap = FFA_MAP_IDS[0];
 if (![2, 3, 'ffa'].includes(cfg.mode)) cfg.mode = 2;
 const isFfaMode = () => cfg.mode === 'ffa';
+let menuMapHook = null; // set once the 3D scene exists; swaps the menu background to the map being picked
 const chosenMap = () => (isFfaMode() ? cfg.ffaMap : cfg.map);
 if (![-1, 0, 1].includes(cfg.team)) cfg.team = -1;
 const TEAM_COLOR_CSS = ['#3b82ff', '#ff5436'];
@@ -548,6 +549,7 @@ function renderMenu() {
 
   renderPicker({ slots: 'slots', spells: 'spellpick' }, cfg, () => renderMenu());
   renderCharSum();
+  if (menuMapHook) menuMapHook();
   { const cm = MAPS[chosenMap()], ct = cm.theme;
     $('mapname').textContent = cm.name;
     $('mapsw').style.background = `linear-gradient(110deg, ${hex(ct.haze)}, ${ct.floor} 55%, ${hex(ct.accent)})`;
@@ -590,7 +592,21 @@ camera.rotation.order = 'YXZ';
 scene.add(camera);
 let world = buildWorld(scene, DEFAULT_MAP);
 let worldMapId = DEFAULT_MAP;
-const showroom = buildShowroom(scene);
+let showroom = buildShowroom(scene);
+menuMapHook = () => {
+  if (playing) return;
+  const id = chosenMap();
+  if (id === worldMapId && showroom.visible) return;
+  if (id !== worldMapId) {
+    world.dispose();
+    world = buildWorld(scene, id);
+    worldMapId = id;
+    applyQuality();
+  }
+  placeShowroom(MAPS[id].size);
+  scene.remove(showroom);
+  showroom = buildShowroom(scene); // rebuilt so its torches animate again and it sits at the new distance
+};
 // The arena for the match we joined (the menu always shows the first one).
 function enterMap(id) {
   useMap(id);
@@ -1694,6 +1710,7 @@ function render(dt, now) {
       preview.group.visible = true;
       preview.group.rotation.y = Math.PI + t * 0.7;
       preview.group.position.y = SHOWROOM.y;
+      preview.group.position.z = SHOWROOM.z;
     }
     world.update(now, camera);
     animateZones(now);

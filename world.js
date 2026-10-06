@@ -525,12 +525,15 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
 
 // ------------------------------------------------------------------ menu showroom
 // A podium just outside the arena wall; the menu camera looks at it with the arena wall behind.
-export const SHOWROOM = { x: 0, z: 46, y: 0.4 };
+const SHOWROOM_BASE_Z = 46;
+export const SHOWROOM = { x: 0, z: SHOWROOM_BASE_Z, y: 0.4 };
+/** Put the podium 16m outside the wall of the arena being previewed (the menu camera looks at it with that wall behind). */
+export function placeShowroom(size) { SHOWROOM.z = size + 16; }
 export function buildShowroom(parent) {
   const scene = new THREE.Group(); // the whole podium lives in one group so it can be hidden during matches
   parent.add(scene);
   const g = new THREE.Group();
-  g.position.set(SHOWROOM.x, 0, SHOWROOM.z);
+  g.position.set(SHOWROOM.x, 0, SHOWROOM_BASE_Z);
   const step = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 3.2, 0.16, 40), SAND);
   step.position.y = 0.08;
   const top = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 0.24, 40), MARBLE);
@@ -542,8 +545,9 @@ export function buildShowroom(parent) {
   // columns behind the podium
   for (const x of [-6.5, 6.5]) column(g, 1.3, 1.3, 7, x, -4);
   scene.add(g);
-  torch(scene, SHOWROOM.x - 3.6, SHOWROOM.z + 1.5, 1.4);
-  torch(scene, SHOWROOM.x + 3.6, SHOWROOM.z + 1.5, 1.4);
+  torch(scene, SHOWROOM.x - 3.6, SHOWROOM_BASE_Z + 1.5, 1.4);
+  torch(scene, SHOWROOM.x + 3.6, SHOWROOM_BASE_Z + 1.5, 1.4);
+  scene.position.z = SHOWROOM.z - SHOWROOM_BASE_Z; // follows the arena size (see placeShowroom)
   return scene;
 }
 
