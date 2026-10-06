@@ -21,7 +21,7 @@ export const JUMP_V = 7.5;
 export const GRAVITY = 22;
 export const MAX_HP = 150;
 
-export const FIRE_INTERVAL = 1.0; // one shot per second
+export const FIRE_INTERVAL = 0.5; // one shot every half second
 export const AMMO_START = 15;     // rounds at the start of every round / life
 export const AMMO_KILL = 5;       // bonus rounds for a kill
 export const AMMO_MAX = 30;       // cap

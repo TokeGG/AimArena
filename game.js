@@ -495,7 +495,7 @@ export class Room {
     if (this.phase !== 'live' || !p.alive || p.polyT > 0) return; // polymorphed: no shooting, no skills
     if (!p.isBot) {
       inp.vt = this.clampVt(p, inp.vt);
-      if (inp.shoot && p.fireCd > 0.35) this.strike(p, 'rapid', 10, 6, 25, 'firing while the weapon is still reloading');
+      if (inp.shoot && p.fireCd > FIRE_INTERVAL * 0.35) this.strike(p, 'rapid', 10, 6, 25, 'firing while the weapon is still reloading');
     }
     // small tolerance: semi-auto clients send one shot per click, so a packet landing a tick early must not be dropped
     if (inp.shoot && p.fireCd <= FIRE_TOLERANCE && (p.ammo > 0 || this.range)) this.shoot(p, inp);

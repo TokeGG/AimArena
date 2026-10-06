@@ -76,10 +76,10 @@ function longestLine(map) {
   return best;
 }
 
-assert.deepEqual(MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth', 'necropolis', 'range']);
+assert.deepEqual(MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'colosseum', 'agora', 'dunes', 'necropolis', 'ashpit', 'range']);
 assert.equal(DEFAULT_MAP, 'olympus');
-assert.deepEqual(TEAM_MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth']);
-assert.deepEqual(FFA_MAP_IDS, ['necropolis']);
+assert.deepEqual(TEAM_MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'colosseum', 'agora', 'dunes']);
+assert.deepEqual(FFA_MAP_IDS, ['necropolis', 'ashpit']);
 
 for (const id of MAP_IDS) {
   const map = MAPS[id];
@@ -182,7 +182,6 @@ for (const id of MAP_IDS) {
   assert.ok(r.pct >= 95, `${id}: only ${r.pct.toFixed(1)}% of free cells reachable`);
   let extra = '';
   const L = longestLine(map);
-  if (id === 'labyrinth') assert.ok(L <= 14, `labyrinth has a ${L.toFixed(1)} m sight line (origin x,z,angle ${longestLine.at})`);
   extra = ` longest line ${L.toFixed(1)}m`;
   console.log(`${id}: size ${ARENA}, ${map.ffa ? 'ffa' : 'team'}, ${map.walls.length} walls, ${map.hazards.length} hazards, ${r.pct.toFixed(1)}% reachable${extra}`);
 }

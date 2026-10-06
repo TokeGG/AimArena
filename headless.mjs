@@ -11,7 +11,7 @@ import { stepPlayer, DT, ARENA, WALLS, useMap } from '../sim.js';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // ------------------------------------------------------------ 1. bot-only matches
-for (const [mode, mapId] of [[2, 'olympus'], [3, 'olympus'], [2, 'foundry'], [3, 'foundry'], [3, 'frostpeak'], [2, 'frostpeak'], [2, 'labyrinth'], [3, 'labyrinth']]) {
+for (const [mode, mapId] of [[2, 'olympus'], [3, 'olympus'], [2, 'foundry'], [3, 'foundry'], [3, 'frostpeak'], [2, 'frostpeak'], [2, 'colosseum'], [3, 'colosseum'], [2, 'agora'], [3, 'dunes']]) {
   const room = new Room(mode, mapId);
   assert.equal(room.players.length, mode * 2);
   let matchEnds = 0, rounds = 0, shots = 0, hits = 0, kills = 0, timeouts = 0;
@@ -192,7 +192,7 @@ try {
     const rm = [];
     rw.onmessage = (e) => rm.push(JSON.parse(e.data));
     await new Promise((r, j) => { rw.onopen = r; rw.onerror = j; });
-    rw.send(JSON.stringify({ t: 'join', name: 'ignored', mode: 2, map: 'labyrinth', queue: 'ranked', token: li.token, loadout: ['dash', 'heal', 'shield'], model: 'vanguard' }));
+    rw.send(JSON.stringify({ t: 'join', name: 'ignored', mode: 2, map: 'colosseum', queue: 'ranked', token: li.token, loadout: ['dash', 'heal', 'shield'], model: 'vanguard' }));
     await new Promise((r) => setTimeout(r, 1200));
     assert.ok(rm.find((m) => m.t === 'queue'), 'no queue message');
     assert.ok(!rm.find((m) => m.t === 'welcome'), 'placed too early');
@@ -200,7 +200,7 @@ try {
     const rwl = rm.find((m) => m.t === 'welcome');
     assert.ok(rwl, 'ranked search never produced a match');
     assert.equal(rwl.ranked, true);
-    assert.equal(rwl.map, 'labyrinth');
+    assert.equal(rwl.map, 'colosseum');
     assert.equal(rwl.name, 'RankTest');
     assert.equal(rwl.rating, 1000);
     // cancel path: leave before being placed

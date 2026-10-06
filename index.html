@@ -253,6 +253,38 @@
   #ratingline { font-size:15px; margin:6px 0 0; color:var(--marble); min-height:20px; }
   #banner .rt { display:block; font-size:22px; font-weight:700; letter-spacing:.06em; margin-top:6px; }
   @media (max-width:640px) { .models { grid-template-columns:repeat(2,1fr); } .spells { grid-template-columns:1fr; } }
+
+  /* ---- HUD polish (v0.7): glass panels, cleaner score bar, health/ammo cards, keycap skills ---- */
+  .sc { border-radius:10px; font-size:28px; min-width:60px; backdrop-filter:blur(6px); background:linear-gradient(180deg, rgba(34,26,14,.78), rgba(18,13,7,.78)); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.45); }
+  .sc.blue { border-bottom:3px solid #3b82ff; } .sc.red { border-bottom:3px solid #ff5436; }
+  .sc.mine { border-color:var(--gold); box-shadow:0 0 14px rgba(226,184,74,.45); }
+  #mid { background:rgba(18,13,7,.7); border:1px solid var(--line); border-radius:10px; padding:3px 14px 4px; backdrop-filter:blur(6px); box-shadow:0 4px 14px rgba(0,0,0,.45); }
+  #timer { font-size:24px; letter-spacing:.04em; }
+  #rd { font-size:10px; color:var(--gold); }
+  #roster { backdrop-filter:blur(6px); background:linear-gradient(180deg, rgba(30,23,12,.78), rgba(16,12,6,.78)); border-radius:10px; box-shadow:0 4px 14px rgba(0,0,0,.45); padding:8px 12px; }
+  #roster .bar { width:60px; height:5px; border-radius:3px; }
+  #roster .nm { font-weight:600; letter-spacing:.02em; }
+  #bl { width:270px; padding:10px 14px 12px; border-radius:12px; background:linear-gradient(180deg, rgba(30,23,12,.8), rgba(14,10,5,.82)); border:1px solid var(--line); box-shadow:0 6px 20px rgba(0,0,0,.5); backdrop-filter:blur(6px); display:grid; grid-template-columns:auto 1fr; align-items:end; column-gap:12px; }
+  #hpval { grid-column:1; grid-row:1; font-size:38px; margin-top:0; min-width:74px; }
+  #hpbar { grid-column:2; grid-row:1; margin:0 0 8px; height:14px; border-radius:7px; background:rgba(0,0,0,.6); box-shadow:inset 0 1px 3px rgba(0,0,0,.8); }
+  #hpfill { border-radius:7px; background-image:linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,0) 55%); background-blend-mode:overlay; box-shadow:0 0 10px currentColor; }
+  #ammo { padding:8px 16px 10px; border-radius:12px; background:linear-gradient(180deg, rgba(30,23,12,.8), rgba(14,10,5,.82)); border:1px solid var(--line); box-shadow:0 6px 20px rgba(0,0,0,.5); backdrop-filter:blur(6px); min-width:104px; }
+  #ammo b { font-family:Georgia,serif; font-size:42px; }
+  #ammo small { color:var(--gold); font-weight:800; }
+  #ammo #firebar { height:4px; background:linear-gradient(90deg, #a77d1f, #f3d27a); box-shadow:0 0 8px rgba(226,184,74,.7); }
+  #ping { opacity:.55; }
+  .spell { border-radius:12px; width:78px; height:90px; background:linear-gradient(180deg, rgba(44,34,16,.9), rgba(14,10,5,.92)); box-shadow:0 6px 16px rgba(0,0,0,.5); backdrop-filter:blur(6px); }
+  .spell .key { top:5px; left:5px; min-width:18px; height:18px; line-height:18px; text-align:center; border-radius:5px; background:rgba(0,0,0,.55); border:1px solid var(--line); font-size:11px; }
+  .spell.ready .key { top:15px; }
+  .spell .ic { top:18px; font-size:34px; }
+  .spell .rdy { background:linear-gradient(90deg, #3fbf72, #5be08d); }
+  #crosshair { filter:drop-shadow(0 0 2px rgba(0,0,0,.9)); }
+
+  #admin table { border-collapse:collapse; width:100%; margin:8px 0; font-size:13px; } #admin th, #admin td { text-align:left; padding:5px 8px; border-bottom:1px solid rgba(226,184,74,.15); vertical-align:top; }
+  #admin th { color:var(--gold); font-weight:700; } #admin code { background:rgba(0,0,0,.4); padding:1px 5px; border-radius:4px; }
+  #admin .tabs button.on { border-color:var(--gold); color:var(--gold); } #admin .adtab { max-height:52vh; overflow:auto; margin-top:6px; }
+  #admin .sev-kick, #admin .k-ban { color:#ff6a5a; } #admin .sev-flag { color:#ffc24a; } #admin .k-report { color:#6fc3ff; }
+  #adminbtn { opacity:.7; }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
@@ -324,7 +356,7 @@
     <div class="row" style="margin-top:10px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
 
     <div class="row" style="margin-top:10px"><button id="watchbtn">&#128065; Watch live games</button><button id="lbbtn">&#127942; Leaderboard</button><button id="profbtn">&#128100; Profile</button><button id="dailybtn">&#128197; Daily challenges</button></div>
-    <div class="row" style="margin-top:8px"><button id="rangebtn">&#127919; Practice range <small style="color:var(--dim)">solo target practice</small></button></div>
+    <div class="row" style="margin-top:8px"><button id="rangebtn">&#127919; Practice range <small style="color:var(--dim)">solo target practice</small></button><button id="adminbtn" style="flex:0 0 auto">&#128737; Admin</button></div>
     <div id="foot">
       <div class="row">
         <button id="quick" class="playbtn">QUICK PLAY<small>jump straight in</small></button>
@@ -372,6 +404,26 @@
 </div>
 
 <div id="toast" class="hidden"></div>
+
+<div id="admin" class="modal hidden">
+  <div class="card" style="width:min(960px,94vw)">
+    <h2>ADMIN PANEL</h2>
+    <div class="row"><input id="adkey" type="password" placeholder="Admin key" autocomplete="off" style="flex:1"><button id="adgo">Unlock</button><button id="adclose">Close</button></div>
+    <div id="adstatus" class="err"></div>
+    <div id="adbody" class="hidden">
+      <div class="tabs row"><button data-tab="online" class="on">Online</button><button data-tab="log">Flags &amp; reports</button><button data-tab="bans">Bans</button><button data-tab="ban">Ban someone</button><button id="adrefresh">&#8635; Refresh</button></div>
+      <div id="adt-online" class="adtab"></div>
+      <div id="adt-log" class="adtab hidden"></div>
+      <div id="adt-bans" class="adtab hidden"></div>
+      <div id="adt-ban" class="adtab hidden">
+        <div class="row"><select id="adbtype"><option value="user">Account name</option><option value="ip">IP hash</option></select>
+        <input id="adbid" placeholder="name or ip hash" style="flex:1">
+        <select id="adbhours"><option value="1">1 hour</option><option value="24">1 day</option><option value="168">1 week</option><option value="0">Permanent</option></select></div>
+        <div class="row"><input id="adbreason" placeholder="reason" style="flex:1"><button id="adbgo">Ban</button></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="daily" class="modal hidden">
   <div class="card">

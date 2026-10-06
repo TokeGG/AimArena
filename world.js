@@ -20,7 +20,7 @@ let MARBLE, MARBLE_DARK, SAND, SAND_DARK, GOLD_MAT;
 let THEME = null;
 let STYLE = 'marble';
 let texList = []; // textures of the current arena (disposed with it, anisotropy set by setQuality)
-const STYLE_BY_MAP = { olympus: 'marble', foundry: 'forge', frostpeak: 'ice', labyrinth: 'brick', necropolis: 'crypt', range: 'marble' };
+const STYLE_BY_MAP = { olympus: 'marble', foundry: 'forge', frostpeak: 'ice', colosseum: 'brick', agora: 'marble', dunes: 'brick', necropolis: 'crypt', ashpit: 'forge', range: 'marble' };
 function tex(canvas, repeat = true, srgb = true) {
   const t = new THREE.CanvasTexture(canvas);
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;

@@ -26,7 +26,7 @@ const MIME = {
 };
 
 // Only these files are ever served (everything lives in one folder, no subfolders).
-const STATIC_FILES = new Set(['admin.html', 'index.html', 'main.js', 'world.js', 'sim.js', 'maps.js', 'textures.js', 'character.js', 'weapon.js']);
+const STATIC_FILES = new Set(['index.html', 'main.js', 'world.js', 'sim.js', 'maps.js', 'textures.js', 'character.js', 'weapon.js']);
 
 function resolveFile(urlPath) {
   let p;
@@ -74,7 +74,7 @@ const bearer = (req) => String(req.headers.authorization || '').replace(/^Bearer
 
 /** Owner-only moderation API. Disabled unless the ADMIN_KEY env var (12+ characters) is set. */
 async function handleAdmin(req, res, route) {
-  if (ADMIN_KEY.length < 12) return sendJson(res, 404, { ok: false, error: 'Not found' });
+  if (ADMIN_KEY.length < 12) return sendJson(res, 503, { ok: false, error: 'Admin is switched off on the server. On Render open Environment, add ADMIN_KEY (12 or more characters), save and let it redeploy, then type that same key here.' });
   if (!adminLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many attempts' });
   if (!sameKey(req.headers['x-admin-key'] || '', ADMIN_KEY)) return sendJson(res, 401, { ok: false, error: 'Wrong key' });
   if (route === '/api/admin/log' && req.method === 'GET') {

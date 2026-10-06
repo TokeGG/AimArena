@@ -37,7 +37,7 @@ assert.ok(r1.player && r2.player && !lobby.tickets.length);
 assert.notEqual(r1.player.team, r2.player.team);
 assert.equal(r1.player.team === r2.player.team, false);
 
-const lone = mk({ ranked: true, rating: 1000, map: 'labyrinth' });
+const lone = mk({ ranked: true, rating: 1000, map: 'colosseum' });
 lobby.enter(lone);
 clock += (RANKED_WAIT - 1) * 1000; lobby.tick();
 assert.ok(!lone.player, 'not yet');

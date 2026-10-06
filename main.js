@@ -353,17 +353,32 @@ const ICON = {
 };
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
+/** The 3 keybind slots as a fixed-size array (null = empty). Removing a skill leaves its slot empty, so the next pick drops back into it. */
+function slotArr(st) {
+  const holes = new Set(st.holes || []);
+  const arr = new Array(SLOT_COUNT).fill(null);
+  let k = 0;
+  for (let p = 0; p < SLOT_COUNT && k < st.loadout.length; p++) if (!holes.has(p)) arr[p] = st.loadout[k++];
+  for (let p = 0; p < SLOT_COUNT && k < st.loadout.length; p++) if (!arr[p]) arr[p] = st.loadout[k++]; // stale holes: just fill what is free
+  return arr;
+}
+function setSlots(st, arr) {
+  st.loadout = arr.filter(Boolean);
+  st.holes = arr.map((x, i) => (x ? -1 : i)).filter((i) => i >= 0);
+}
+
 /** 3 skills picker, used by the main menu and by the 15 second window after a match. */
 function renderPicker(ids, st, onChange) {
   const slots = $(ids.slots);
   slots.innerHTML = '';
+  const arr = slotArr(st);
   for (let i = 0; i < SLOT_COUNT; i++) {
-    const id = st.loadout[i];
+    const id = arr[i];
     const d = document.createElement('div');
     if (id) {
       d.className = 'slot filled';
       d.innerHTML = `<span class="k">${esc(slotLabel(i))}</span><span class="x">&#10005;</span><div class="ic">${ICON[id]}</div><div class="nm">${SPELLS[id].name}</div>`;
-      d.onclick = () => { st.loadout = st.loadout.filter((x) => x !== id); onChange('skills'); };
+      d.onclick = () => { const a = slotArr(st); a[i] = null; setSlots(st, a); onChange('skills'); };
     } else {
       d.className = 'slot';
       d.innerHTML = `<span class="k">${esc(slotLabel(i))}</span><div class="empty">pick a skill</div>`;
@@ -379,15 +394,17 @@ function renderPicker(ids, st, onChange) {
   pts.textContent = `Skill points: ${used} / ${LOADOUT_BUDGET} spent`;
   box.appendChild(pts);
   for (const [id, s] of Object.entries(SPELLS)) {
-    const slot = st.loadout.indexOf(id);
+    const slot = arr.indexOf(id);
     const tooCostly = slot < 0 && used + s.cost > LOADOUT_BUDGET;
     const b = document.createElement('button');
     b.className = 'spellcard' + (slot >= 0 ? ' on' : '') + (tooCostly ? ' costly' : '');
     b.innerHTML = `${slot >= 0 ? `<span class="badge">${esc(slotLabel(slot))}</span>` : ''}<span class="ic">${ICON[id]}</span><span><b>${s.name} <em class="cost">${s.cost} pt${s.cost > 1 ? 's' : ''}</em></b><small>${s.desc} (${s.cd}s)</small></span>`;
     b.onclick = () => {
-      if (slot >= 0) st.loadout = st.loadout.filter((x) => x !== id);
+      const a = slotArr(st);
+      if (slot >= 0) a[slot] = null;
       else if (tooCostly) { pts.classList.add('shake'); setTimeout(() => pts.classList.remove('shake'), 400); return; }
-      else if (st.loadout.length < SLOT_COUNT) st.loadout = [...st.loadout, id];
+      else { const free = a.indexOf(null); if (free < 0) return; a[free] = id; }
+      setSlots(st, a);
       onChange('skills');
     };
     box.appendChild(b);
@@ -560,9 +577,9 @@ const gunLight = new THREE.DirectionalLight(0xffffff, 1.2);
 gunLight.position.set(1, 2, 2);
 gunScene.add(gunLight);
 const gun = new THREE.Group();
-const GUN_X = 0.19, GUN_Y = -0.17, GUN_Z = -0.45, GUN_SCALE = 0.7; // viewmodel placement: tune here
+const GUN_X = 0.15, GUN_Y = -0.14, GUN_Z = -0.38, GUN_SCALE = 0.4; // viewmodel placement: tune here
 gun.position.set(GUN_X, GUN_Y, GUN_Z);
-gun.rotation.y = 0.03;
+gun.rotation.y = 0;
 gunScene.add(gun);
 let gunKey = '', gunRifle = null;
 /** (Re)build the first-person AK in the skin you wear. */
@@ -1097,6 +1114,55 @@ function renderDaily() {
 $('dailybtn').onclick = () => { renderDaily(); $('daily').classList.remove('hidden'); dailyTimer = setInterval(renderDaily, 30000); };
 $('dailyclose').onclick = () => { $('daily').classList.add('hidden'); clearInterval(dailyTimer); };
 
+// ------------------------------------------------------------------ admin panel (owner only; the server checks the key on every call)
+{
+  const KEY = 'aim-admin-key';
+  const adApi = async (path, body) => {
+    const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'x-admin-key': $('adkey').value, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    return r.json().catch(() => ({ ok: false, error: `Server answered ${r.status}` }));
+  };
+  const tabShow = (name) => {
+    document.querySelectorAll('#admin .tabs [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+    document.querySelectorAll('#admin .adtab').forEach((t) => t.classList.toggle('hidden', t.id !== `adt-${name}`));
+  };
+  const quickBtn = (type, id, label) => `<button data-qt="${type}" data-qid="${esc(id)}">${label}</button>`;
+  async function adLoad() {
+    $('adstatus').textContent = 'Loading...';
+    let d;
+    try { d = await adApi('/api/admin/log'); } catch { d = { ok: false, error: 'Could not reach the server' }; }
+    if (!d.ok) { $('adstatus').textContent = d.error || 'Failed'; $('adbody').classList.add('hidden'); return; }
+    try { sessionStorage.setItem(KEY, $('adkey').value); } catch { /* ignore */ }
+    $('adstatus').textContent = '';
+    $('adbody').classList.remove('hidden');
+    $('adt-online').innerHTML = `<table><tr><th>Name</th><th>Account</th><th>IP hash</th><th>Room</th><th></th></tr>${d.online.map((o) => `<tr><td>${esc(o.name)}</td><td>${esc(o.uid || 'guest')}</td><td><code>${esc(o.ip)}</code></td><td>${esc(o.room)} (${esc(o.mode)})</td><td>${o.uid ? quickBtn('user', o.uid, 'Ban account') : ''} ${quickBtn('ip', o.ip, 'Ban IP')}</td></tr>`).join('') || '<tr><td colspan="5">Nobody online.</td></tr>'}</table>`;
+    $('adt-log').innerHTML = `<table><tr><th>When</th><th>Type</th><th>Who</th><th>IP hash</th><th>Detail</th></tr>${d.log.map((e) => `<tr><td>${esc(new Date(e.t).toLocaleString())}</td><td class="k-${esc(e.kind)} sev-${esc(e.sev || '')}">${esc(e.kind)}${e.flag ? ' / ' + esc(e.flag) : ''}${e.reason ? ' / ' + esc(e.reason) : ''}${e.sev ? ' (' + esc(e.sev) + ')' : ''}</td><td>${esc(e.who)}${e.by ? `<br><small>by ${esc(e.by)}</small>` : ''}</td><td><code>${esc(e.ip || '')}</code></td><td>${esc(e.detail || '')}</td></tr>`).join('') || '<tr><td colspan="5">Nothing flagged yet.</td></tr>'}</table>`;
+    $('adt-bans').innerHTML = `<table><tr><th>Type</th><th>Id</th><th>Until</th><th>Reason</th><th></th></tr>${d.bans.map((b) => `<tr><td>${esc(b.type)}</td><td>${esc(b.id)}</td><td>${b.until ? esc(new Date(b.until).toLocaleString()) : 'permanent'}</td><td>${esc(b.reason)}</td><td><button data-un="${esc(b.type)}|${esc(b.id)}">Unban</button></td></tr>`).join('') || '<tr><td colspan="5">No active bans.</td></tr>'}</table>`;
+  }
+  $('adminbtn').onclick = () => {
+    $('admin').classList.remove('hidden');
+    try { $('adkey').value = sessionStorage.getItem(KEY) || $('adkey').value; } catch { /* ignore */ }
+    if ($('adkey').value) adLoad(); else $('adkey').focus();
+  };
+  $('adclose').onclick = () => $('admin').classList.add('hidden');
+  $('adgo').onclick = adLoad;
+  $('adrefresh').onclick = adLoad;
+  $('adkey').addEventListener('keydown', (e) => { if (e.key === 'Enter') adLoad(); });
+  $('admin').addEventListener('click', async (e) => {
+    const t = e.target.closest('[data-tab]');
+    if (t) { tabShow(t.dataset.tab); return; }
+    const q = e.target.closest('[data-qt]');
+    if (q) { $('adbtype').value = q.dataset.qt; $('adbid').value = q.dataset.qid; tabShow('ban'); $('adbreason').focus(); return; }
+    const un = e.target.closest('[data-un]');
+    if (un) { const [ty, id] = un.dataset.un.split('|'); await adApi('/api/admin/unban', { type: ty, id }); adLoad(); }
+  });
+  $('adbgo').onclick = async () => {
+    const r = await adApi('/api/admin/ban', { type: $('adbtype').value, id: $('adbid').value.trim(), hours: Number($('adbhours').value), reason: $('adbreason').value });
+    $('adstatus').textContent = r.ok ? 'Banned.' : (r.error || 'Failed');
+    if (r.ok) { $('adbid').value = ''; $('adbreason').value = ''; adLoad().then(() => { $('adstatus').textContent = 'Banned.'; }); }
+  };
+  if (location.hash === '#admin') $('adminbtn').click();
+}
+
 $('profbtn').onclick = () => { renderProfile(); $('prof').classList.remove('hidden'); };
 $('profclose').onclick = () => $('prof').classList.add('hidden');
 
@@ -1410,6 +1476,7 @@ $('endleave').onclick = () => location.reload();
 $('playagain').onclick = () => {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'rematch' }));
   $('playagain').disabled = true; $('playagain').textContent = 'READY';
+  lockPointer(); // the click is the user gesture the browser needs, so the next match starts with no menu in the way
 };
 
 // ------------------------------------------------------------------ 15 second pick window after a match
@@ -1432,7 +1499,7 @@ function updatePickWindow() {
   const want = phase === 'matchEnd' && !spec;
   if (want && !pickOpen) {
     pickOpen = true;
-    pickSt.loadout = [...meLoadout];
+    pickSt.loadout = [...meLoadout]; pickSt.holes = [];
     lastSentPick = JSON.stringify(pickSt.loadout);
     if (document.pointerLockElement) document.exitPointerLock();
     $('pause').classList.add('hidden');
@@ -1728,7 +1795,7 @@ function updateHud(now) {
   setText($('hpval'), String(meAlive ? meHp : 0));
   const hf = $('hpfill');
   hf.style.width = `${meAlive ? clamp(meHp / meMax, 0, 1) * 100 : 0}%`;
-  hf.style.background = meHp > 50 ? '#4ade80' : meHp > 25 ? '#facc15' : '#f87171';
+  { const fr = meHp / meMax; hf.style.backgroundColor = fr > 0.5 ? '#4ade80' : fr > 0.25 ? '#facc15' : '#f87171'; hf.style.color = hf.style.backgroundColor; }
 
   const spells = $('spells').children;
   for (let i = 0; i < spells.length; i++) {

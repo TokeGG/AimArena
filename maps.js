@@ -171,126 +171,139 @@ const frostpeak = {
   },
 };
 
-// ---------------------------------------------------------------- labyrinth (size 18, generated symmetric maze)
-// 9x9 cells of pitch 4 (corridors 2.8 m wide, walls 1.2 m thick). Walls are the closed edges between cells;
-// the maze is carved symmetrically (cell (i,j) <-> (8-i,8-j)) from a fixed seed, so it is deterministic.
-const LAB = { n: 9, pitch: 4, half: 18, t: 1.2, seed: 0 };
-function mulberry32(a) {
-  return () => {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-export function labyrinthWalls(seed = LAB.seed, loops = LAB.loops) {
-  const { n, pitch: P, half: H, t } = LAB;
-  const rnd = mulberry32(seed);
-  // edges: 'V' i,j joins (i,j)-(i+1,j) (wall along z); 'H' i,j joins (i,j)-(i,j+1) (wall along x)
-  const key = (k, i, j) => `${k}${i},${j}`;
-  const symE = (k, i, j) => (k === 'V' ? ['V', n - 2 - i, n - 1 - j] : ['H', n - 1 - i, n - 2 - j]);
-  const open = new Set();
-  const forced = new Map(); // edge key -> kind of closed wall
-  const setForced = (k, i, j, kind) => { forced.set(key(k, i, j), kind); const [a, b, c] = symE(k, i, j); forced.set(key(a, b, c), kind); };
-  setForced('V', 2, 0, 'shield'); setForced('V', 5, 0, 'shield'); setForced('H', 4, 0, 'shield');
-  const openEdge = (k, i, j) => { open.add(key(k, i, j)); const [a, b, c] = symE(k, i, j); open.add(key(a, b, c)); };
-  openEdge('V', 3, 0); openEdge('V', 4, 0); openEdge('H', 3, 0); openEdge('H', 5, 0);
-  const all = [];
-  for (let j = 0; j < n; j++) for (let i = 0; i < n - 1; i++) all.push(['V', i, j]);
-  for (let j = 0; j < n - 1; j++) for (let i = 0; i < n; i++) all.push(['H', i, j]);
-  const cand = all.filter(([k, i, j]) => !forced.has(key(k, i, j)) && !open.has(key(k, i, j)));
-  for (let i = cand.length - 1; i > 0; i--) { const r = Math.floor(rnd() * (i + 1)); [cand[i], cand[r]] = [cand[r], cand[i]]; }
-  const par = Array.from({ length: n * n }, (_, i) => i);
-  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
-  const ends = (k, i, j) => (k === 'V' ? [j * n + i, j * n + i + 1] : [j * n + i, (j + 1) * n + i]);
-  for (const [k, i, j] of all) if (open.has(key(k, i, j))) { const [a, b] = ends(k, i, j); par[find(a)] = find(b); }
-  // limit straight corridors: at most 2 consecutive open edges in a row/column
-  const isOpen = (k, i, j) => open.has(key(k, i, j));
-  const runOK = (k, i, j) => {
-    let run = 1;
-    if (k === 'V') { for (let a = i - 1; a >= 0 && isOpen('V', a, j); a--) run++; for (let a = i + 1; a < n - 1 && isOpen('V', a, j); a++) run++; }
-    else { for (let a = j - 1; a >= 0 && isOpen('H', i, a); a--) run++; for (let a = j + 1; a < n - 1 && isOpen('H', i, a); a++) run++; }
-    return run <= 2;
-  };
-  const unite = (k, i, j) => { const [a, b] = ends(k, i, j); par[find(a)] = find(b); const [s, x, y] = symE(k, i, j); const [c, d] = ends(s, x, y); par[find(c)] = find(d); };
-  for (const [k, i, j] of cand) {
-    const [a, b] = ends(k, i, j);
-    if (find(a) === find(b)) continue;
-    if (!runOK(k, i, j)) continue;
-    openEdge(k, i, j); unite(k, i, j);
-  }
-  // extra loops
-  let extra = 0;
-  for (const [k, i, j] of cand) {
-    if (extra >= loops) break;
-    if (isOpen(k, i, j) || !runOK(k, i, j)) continue;
-    if (rnd() < 0.5) { openEdge(k, i, j); extra++; }
-  }
-  // build merged wall runs
-  const walls = [];
-  const cell = (c) => -H + c * P; // node coordinate of grid line c (0..n)
-  const clip = (v) => Math.max(-H, Math.min(H, v));
-  const kindAt = (k, i, j) => (isOpen(k, i, j) ? null : forced.get(key(k, i, j)) || 'cover');
-  // vertical walls (along z) on lines x = cell(i+1)
-  for (let i = 0; i < n - 1; i++) {
-    let j = 0;
-    while (j < n) {
-      const kd = kindAt('V', i, j);
-      if (!kd) { j++; continue; }
-      let e = j;
-      while (e + 1 < n && kindAt('V', i, e + 1) === kd) e++;
-      const x = cell(i + 1), z0 = clip(cell(j) - t / 2), z1 = clip(cell(e + 1) + t / 2);
-      walls.push({ minX: x - t / 2, maxX: x + t / 2, minZ: z0, maxZ: z1, h: kd === 'shield' ? SHIELD_H : 3, kind: kd });
-      j = e + 1;
-    }
-  }
-  for (let j = 0; j < n - 1; j++) {
-    let i = 0;
-    while (i < n) {
-      const kd = kindAt('H', i, j);
-      if (!kd) { i++; continue; }
-      let e = i;
-      while (e + 1 < n && kindAt('H', e + 1, j) === kd) e++;
-      const z = cell(j + 1), x0 = clip(cell(i) - t / 2), x1 = clip(cell(e + 1) + t / 2);
-      walls.push({ minX: x0, maxX: x1, minZ: z - t / 2, maxZ: z + t / 2, h: kd === 'shield' ? SHIELD_H : 3, kind: kd });
-      i = e + 1;
-    }
-  }
-  // pillars on interior grid nodes that no wall touches (breaks diagonal sight lines)
-  for (let a = 1; a < n; a++) for (let b = 1; b < n; b++) {
-    const x = cell(a), z = cell(b);
-    const touched = [['V', a - 1, b - 1], ['V', a - 1, b], ['H', a - 1, b - 1], ['H', a, b - 1]].some(([k, i, j]) => kindAt(k, i, j));
-    if (!touched) walls.push({ minX: x - t / 2, maxX: x + t / 2, minZ: z - t / 2, maxZ: z + t / 2, h: 3, kind: 'cover' });
-  }
-  return walls;
-}
-LAB.seed = 1266; LAB.loops = 0;
-const labyrinth = {
-  id: 'labyrinth',
-  name: 'Labyrinth of Minos',
-  tagline: 'Tight stone maze, doorways everywhere, no long sight lines',
-  size: 18,
+// ---------------------------------------------------------------- colosseum (size 28, north/south teams)
+// Gladiator arena: a central plinth, a ring of pillars, low arcs, shielded gates for each team.
+const colosseum = {
+  id: 'colosseum',
+  name: 'Gladiator Colosseum',
+  tagline: 'Round sand arena: pillar ring, low arcs, central plinth',
+  size: 28,
   ffa: false,
-  // team 0 starts in a shielded pocket on the north edge facing south (yaw PI)
   spawns: [
-    { x: -4, z: -16, yaw: Math.PI },
-    { x: 4, z: -16, yaw: Math.PI },
-    { x: 0, z: -16, yaw: Math.PI },
+    { x: -3, z: -25, yaw: Math.PI },
+    { x: 3, z: -25, yaw: Math.PI },
+    { x: 0, z: -23.2, yaw: Math.PI },
   ],
-  walls: labyrinthWalls(),
+  walls: build([
+    [0, 0, 4, 4, 3.5, 'temple'],
+  ], [
+    // gates
+    [0, -18, 20, 1.2, SHIELD_H, 'shield'],
+    [-10.6, -24.75, 1.2, 6.5, SHIELD_H, 'shield'],
+    [10.6, -24.75, 1.2, 6.5, SHIELD_H, 'shield'],
+    // pillar ring
+    [11, 0, 1.6, 1.6, 3],
+    [0, 10, 1.6, 1.6, 3],
+    [8, 8, 1.6, 1.6, 3],
+    [8, -8, 1.6, 1.6, 3],
+    // low arcs
+    [6, 0, 1.2, 6, 1.0],
+    [-4.5, -6, 5, 1.2, 1.0],
+    [4.5, -6, 5, 1.2, 1.0],
+    // outer flank cover
+    [-18, -6, 1.5, 6, 3],
+    [-17, 8, 4, 1.5, 3],
+  ]),
   hazards: [],
   theme: {
-    haze: 0x17120a,
-    sky: [[0, '#070502'], [0.3, '#15100a'], [0.46, '#3a2a12'], [0.5, '#8a6a2a'], [0.56, '#33240f'], [1, '#17120a']],
+    haze: 0x1c1208,
+    sky: [[0, '#0a0603'], [0.3, '#1d1208'], [0.46, '#5a3412'], [0.5, '#d8832a'], [0.56, '#4a2a10'], [1, '#1c1208']],
+    stars: false,
+    marble: 0xb09a72, marbleDark: 0x6b5a3a, sand: 0x9a7a48, sandDark: 0x6a5230, gold: 0xf0c050,
+    floor: '#6a5636', floorTint: 'rgba(255,200,120,.08)', floorLine: 'rgba(30,18,4,.55)',
+    hemi: [0xe0b070, 0x3a2812, 1.0],
+    moon: [0xffd08a, 1.2],
+    moonDisc: 0xffe6b0, moonHalo: 0xf09030,
+    torch: 0xffb040,
+    ground: 0x2a1c0c, mountain: 0x3a2812, cloud: 0x8a5a2a,
+    accent: 0xf0c050,
+  },
+};
+
+// ---------------------------------------------------------------- agora (size 24, north/south, compact market square)
+const agora = {
+  id: 'agora',
+  name: 'Agora Market',
+  tagline: 'Compact square with stalls, fast flanks',
+  size: 24,
+  ffa: false,
+  spawns: [
+    { x: -3, z: -21, yaw: Math.PI },
+    { x: 3, z: -21, yaw: Math.PI },
+    { x: 0, z: -19.2, yaw: Math.PI },
+  ],
+  walls: build([
+    [0, 0, 3, 3, 3],
+  ], [
+    [0, -14, 18, 1.2, SHIELD_H, 'shield'],
+    [-9.6, -20.75, 1.2, 6.5, SHIELD_H, 'shield'],
+    [9.6, -20.75, 1.2, 6.5, SHIELD_H, 'shield'],
+    // stalls
+    [7, 0, 1.2, 5, 3],
+    [0, 6, 5, 1.2, 3],
+    [-6.5, -6.5, 3, 3, 1.0],
+    [6.5, -6.5, 3, 3, 1.0],
+    [-12, 0, 1.6, 1.6, 3],
+    [12, 8, 1.6, 1.6, 3],
+    [-12, 8, 1.6, 1.6, 3],
+  ]),
+  hazards: [],
+  theme: {
+    haze: 0x0e1a1f,
+    sky: [[0, '#03080c'], [0.3, '#08202a'], [0.46, '#1a5a66'], [0.5, '#4aa8a0'], [0.56, '#145058'], [1, '#0e1a1f']],
     stars: true,
-    marble: 0x8a7b5c, marbleDark: 0x4f4430, sand: 0x6b4f32, sandDark: 0x45331f, gold: 0xe8c04a,
-    floor: '#3d3526', floorTint: 'rgba(255,220,140,.06)', floorLine: 'rgba(12,8,2,.65)',
-    hemi: [0xc8a860, 0x241a0e, 0.9],
-    moon: [0xffe2a0, 1.05],
-    moonDisc: 0xfff0c8, moonHalo: 0xe0a840,
-    torch: 0xffc24a,
-    ground: 0x16110a, mountain: 0x241a0e, cloud: 0x5f4a28,
-    accent: 0xe8c04a,
+    marble: 0x8aa8a4, marbleDark: 0x47625f, sand: 0x5c6a5a, sandDark: 0x3c4a3c, gold: 0x7ff0d8,
+    floor: '#3c5654', floorTint: 'rgba(160,255,230,.07)', floorLine: 'rgba(4,16,14,.6)',
+    hemi: [0x70c8c0, 0x1c2e2c, 0.95],
+    moon: [0xb0fff0, 1.2],
+    moonDisc: 0xe0fff8, moonHalo: 0x50d8c0,
+    torch: 0x7ff0d8,
+    ground: 0x10201e, mountain: 0x163230, cloud: 0x3a7a72,
+    accent: 0x7ff0d8,
+  },
+};
+
+// ---------------------------------------------------------------- dunes (size 38, west/east teams, ruined desert)
+const dunes = {
+  id: 'dunes',
+  name: 'Ember Dunes',
+  tagline: 'Wide desert ruins, dune ridges and broken arches',
+  size: 38,
+  ffa: false,
+  spawns: [
+    { x: -34, z: -3, yaw: -Math.PI / 2 },
+    { x: -34, z: 3, yaw: -Math.PI / 2 },
+    { x: -35.8, z: 0, yaw: -Math.PI / 2 },
+  ],
+  walls: build([
+    [0, 0, 5, 5, 3],
+  ], [
+    [-29, 0, 1.2, 12, SHIELD_H, 'shield'],
+    [-20, 12, 1.2, 8, 3],
+    [-12, -10, 6, 1.2, 1.0],
+    [-8, 18, 5, 5, 3],
+    [-22, -22, 6, 1.2, 3],
+    [-6, -5, 1.6, 1.6, 3],
+    [8, -16, 1.2, 6, 1.0],
+    [14, 8, 4, 4, 3.5, 'temple'],
+    [-14, 28, 1.6, 1.6, 3],
+    [2, 30, 1.6, 1.6, 3],
+    [-8, -26, 12, 1.2, 1.0],
+    [16, -24, 1.6, 1.6, 3],
+  ]),
+  hazards: [],
+  theme: {
+    haze: 0x1a0e08,
+    sky: [[0, '#0a0402'], [0.3, '#241008'], [0.46, '#6a2a10'], [0.5, '#f08a3a'], [0.56, '#5a2410'], [1, '#1a0e08']],
+    stars: false,
+    marble: 0xc0966a, marbleDark: 0x7a5a3a, sand: 0xb8884a, sandDark: 0x8a6232, gold: 0xffc060,
+    floor: '#8a6a40', floorTint: 'rgba(255,170,90,.09)', floorLine: 'rgba(40,20,4,.5)',
+    hemi: [0xf0a860, 0x3a2410, 1.05],
+    moon: [0xffb070, 1.3],
+    moonDisc: 0xffd0a0, moonHalo: 0xff7a20,
+    torch: 0xff9030,
+    ground: 0x30200e, mountain: 0x4a2a14, cloud: 0xa05a2a,
+    accent: 0xffc060,
   },
 };
 
@@ -341,6 +354,34 @@ const necropolis = {
   },
 };
 
+// ---------------------------------------------------------------- ashpit (size 32, FFA arena around a lava pit)
+const ASH_SPAWNS = [[27, -27], [0, -27], [-27, -27], [27, -9], [-27, -9], [13, -14], [-13, -14]]
+  .flatMap(([x, z]) => [{ x, z }, { x: -x, z: -z }]);
+const ashpit = {
+  id: 'ashpit',
+  name: 'Ashpit',
+  tagline: 'Free-for-all ring around a lava pit, bridges and pillars',
+  size: 32,
+  ffa: true,
+  ffaSpawns: ASH_SPAWNS,
+  walls: build([
+    [0, 0, 14, 1.2, 1.0, 'low'],
+  ], [
+    [0, 0, 1.2, 14, 1.0, 'low'],
+    [0, -12, 1.6, 1.6, 3],
+    [12, 0, 1.6, 1.6, 3],
+    [9, -9, 1.6, 1.6, 3],
+    [-9, -9, 1.6, 1.6, 3],
+    [-20, -18, 6, 1.2, 3],
+    [20, -4, 1.2, 6, 3],
+    [-22, 2, 4, 4, 3.5, 'temple'],
+    [8, -22, 5, 1.2, 1.0],
+    [-4, -20, 1.2, 4, 1.0],
+  ]),
+  hazards: mirrorHaz([[0, 0, 6]]),
+  theme: { ...foundry.theme },
+};
+
 // ---------------------------------------------------------------- range (size 22, solo practice)
 // A small open yard with a few cover pieces; the dummies live here. Not offered in the normal menus.
 const range = {
@@ -358,7 +399,7 @@ const range = {
   theme: { ...olympus.theme },
 };
 
-export const MAPS = { olympus, foundry, frostpeak, labyrinth, necropolis, range };
+export const MAPS = { olympus, foundry, frostpeak, colosseum, agora, dunes, necropolis, ashpit, range };
 export const MAP_IDS = Object.keys(MAPS);
 export const DEFAULT_MAP = 'olympus';
 export const TEAM_MAP_IDS = MAP_IDS.filter((id) => !MAPS[id].ffa);

@@ -22,7 +22,10 @@ The browser loads Three.js from a CDN (jsDelivr), so it needs internet access.
 | Temple of Zeus | 60 m | North / south | Balanced marble ruins around a central temple |
 | Hades' Foundry | 40 m | Opposite corners | Small, a lava pit in the middle crossed by narrow bridges |
 | Frostpeak | 84 m | West / east | Huge and open, long sight lines for snipers |
-| Labyrinth | 36 m | North / south | A real maze, short sight lines, close fights |
+| Gladiator Colosseum | 56 m | North / south | Round sand arena, pillar ring, low arcs |
+| Agora Market | 48 m | North / south | Compact market square, fast flanks |
+| Ember Dunes | 76 m | West / east | Wide desert ruins, dune ridges |
+| Ashpit | 64 m | Free-for-all | Lava pit with bridges and pillars (FFA) |
 | Necropolis | 96 m | Free-for-all | Ruined graveyard city with four districts and lava pits |
 - **Between matches**: after a match ends you get 15 seconds to change skills for the next one.
 
@@ -32,7 +35,7 @@ Damage numbers float off enemies you hit (gold and bigger for headshots, with a 
 
 ## Ammo and fire rate
 
-One shot per second. You start every round (and every respawn in free-for-all) with 15 rounds. A kill gives +5, up to 30. There is no reload: at 0 you can't shoot, only use skills, until you get a kill (or the next round). The ammo count is bottom right, with a bar showing the shot cooldown. Tune AMMO_START, AMMO_KILL, AMMO_MAX and FIRE_INTERVAL at the top of `sim.js`.
+One shot every half second. You start every round (and every respawn in free-for-all) with 15 rounds. A kill gives +5, up to 30. There is no reload: at 0 you can't shoot, only use skills, until you get a kill (or the next round). The ammo count is bottom right, with a bar showing the shot cooldown. Tune AMMO_START, AMMO_KILL, AMMO_MAX and FIRE_INTERVAL at the top of `sim.js`.
 
 ## Spectating
 
@@ -101,7 +104,7 @@ Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
 | Polymorph | 18s | Aimed shot: turns the enemy into a sheep for 2s. They can move but cannot shoot or cast |
 | Overcharge | 14s | Your next rifle shot (6s to use it) does double damage |
 
-Rifle: 22 body / 45 headshot damage, 150 HP, 0.18s between shots. Lava on Foundry burns anyone touching the floor in it.
+Rifle: 22 body / 45 headshot damage, 150 HP, 0.5s between shots. Lava on Foundry burns anyone touching the floor in it.
 
 ## Safety and anti-cheat
 
@@ -120,13 +123,13 @@ The server decides everything (movement, hits, ammo, cooldowns), so a modified c
 | Browser protection | Content-Security-Policy, no framing, no MIME sniffing. |
 | Privacy | IP addresses are never stored: logs and bans use a 12-character salted hash. |
 
-### Moderating (your admin page)
+### Moderating (the Admin panel in the menu)
 
 1. On Render add the environment variable `ADMIN_KEY` (any 12+ character secret). Optional: `TRUST_PROXY_HOPS=1`.
-2. Open `https://YOUR-SITE.onrender.com/admin.html`, type the key, press Load.
+2. Open your game, click **Admin** (next to Practice range), type the key, press Unlock.
 3. You get: who is online (with account and address hash), the log of flags and reports, and bans. Click Ban account or Ban IP on a row, pick a duration, Ban. The player is disconnected immediately. Unban from the Bans table.
 
-Without `ADMIN_KEY` the admin API does not exist. The log and bans are saved in the same storage as accounts, so they only survive restarts with Upstash connected.
+Without `ADMIN_KEY` the panel says the admin is switched off and tells you what to set. The log and bans are saved in the same storage as accounts, so they only survive restarts with Upstash connected.
 
 ## Rivals and sounds
 
