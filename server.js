@@ -75,8 +75,11 @@ const bearer = (req) => String(req.headers.authorization || '').replace(/^Bearer
 /** Owner-only moderation API. Disabled unless the ADMIN_KEY env var (12+ characters) is set. */
 async function handleAdmin(req, res, route) {
   if (ADMIN_KEY.length < 12) return sendJson(res, 503, { ok: false, error: 'Admin is switched off on the server. On Render open Environment, add ADMIN_KEY (12 or more characters), save and let it redeploy, then type that same key here.' });
-  if (!adminLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many attempts' });
-  if (!sameKey(req.headers['x-admin-key'] || '', ADMIN_KEY)) return sendJson(res, 401, { ok: false, error: 'Wrong key' });
+  if (!sameKey(String(req.headers['x-admin-key'] || '').trim(), ADMIN_KEY.trim())) {
+    // only wrong keys count toward the limit, so using the panel never locks you out
+    if (!adminLimit(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many wrong keys. Wait a minute and try again.' });
+    return sendJson(res, 401, { ok: false, error: 'Wrong key' });
+  }
   if (route === '/api/admin/log' && req.method === 'GET') {
     const online = [...sockets].filter((w) => w.player).map((w) => ({ name: w.player.name, uid: w.player.uid || '', ip: w.ipH || '', room: w.room ? w.room.rid : '-', mode: w.room ? w.room.mode : '-' }));
     return sendJson(res, 200, { ok: true, log: mod.list(200), bans: mod.bans(), online });
