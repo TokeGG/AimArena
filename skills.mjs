@@ -1,7 +1,7 @@
 // Unit tests for the status-effect skills, using two hand-placed players.
 import assert from 'node:assert/strict';
 import { Room } from '../game.js';
-import { stepPlayer, DT, EYE_H, MODELS } from '../shared/sim.js';
+import { stepPlayer, DT, EYE_H, MODELS } from '../sim.js';
 
 function setup(loadout, model = 'striker') {
   const room = new Room(2);
@@ -42,11 +42,16 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   for (const [k, m] of Object.entries(MODELS)) assert.ok(m.hp > 0 && m.speed > 0, k);
 }
 
-// ---- Bind: roots the target, who then cannot move; wears off
+// ---- Bind: next rifle shot roots its target, who then cannot move; wears off
 {
   const { room, shooter, enemy } = setup(['bind', 'dash', 'heal']);
   act(room, shooter, [enemy.x, 1.0, enemy.z], { q: true });
-  assert.ok(enemy.rootT > 1.5, `enemy should be rooted (rootT=${enemy.rootT})`);
+  assert.ok(shooter.bindBuffT > 5, 'bind buff not active');
+  assert.equal(enemy.rootT, 0, 'casting bind itself must not root anyone');
+  assert.equal(room.snapshot().p.find((p) => p.id === shooter.id).bf & 8, 8, 'snapshot missing bind buff flag');
+  act(room, shooter, [enemy.x, 1.0, enemy.z], { shoot: true });
+  assert.ok(enemy.rootT > 1.5, `enemy should be rooted by the next shot (rootT=${enemy.rootT})`);
+  assert.equal(shooter.bindBuffT, 0, 'bind buff should be used up by the shot');
   const x0 = enemy.x, z0 = enemy.z;
   for (let i = 0; i < 30; i++) {
     room.queueInput(enemy, { seq: i + 1, mx: 1, mz: 1, yaw: 0, pitch: 0, jump: true, shoot: false });
@@ -54,16 +59,18 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   }
   assert.ok(Math.hypot(enemy.x - x0, enemy.z - z0) < 0.05, 'rooted player moved');
   assert.equal(enemy.y, 0, 'rooted player jumped');
-  // bind misses when aimed off-target
+  // a missed shot still uses the bind up
   const { room: r2, shooter: s2, enemy: e2 } = setup(['bind', 'dash', 'heal']);
   act(r2, s2, [e2.x + 6, 1.0, e2.z], { q: true });
-  assert.equal(e2.rootT, 0, 'missed bind rooted someone');
+  act(r2, s2, [e2.x + 6, 1.0, e2.z], { shoot: true });
+  assert.equal(e2.rootT, 0, 'missed bind shot rooted someone');
+  assert.equal(s2.bindBuffT, 0, 'missed shot should still use the bind up');
   // root wears off through stepPlayer
-  const st = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0.1, slowT: 0 };
-  for (let i = 0; i < 10; i++) stepPlayer(st, { mx: 0, mz: 1, yaw: 0, jump: false }, DT);
+  const st = { x: -28, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0.1, slowT: 0 };
+  for (let i = 0; i < 10; i++) stepPlayer(st, { mx: 0, mz: 1, yaw: -Math.PI / 2, jump: false }, DT);
   assert.equal(st.rootT, 0);
-  for (let i = 0; i < 30; i++) stepPlayer(st, { mx: 0, mz: 1, yaw: 0, jump: false }, DT);
-  assert.ok(st.z < -1, 'player should move again after the root ends');
+  for (let i = 0; i < 30; i++) stepPlayer(st, { mx: 0, mz: 1, yaw: -Math.PI / 2, jump: false }, DT);
+  assert.ok(st.x > -28 + 1, 'player should move again after the root ends');
 }
 
 // ---- Incendiary Rounds: fire zone under the target + burning damage
@@ -142,10 +149,10 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   act(room, shooter, [enemy.x, 1.0, enemy.z], { q: true });
   assert.ok(enemy.hp < hp0, 'nova did no damage');
   assert.ok(enemy.slowT > 2, 'enemy not slowed');
-  const slow = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0, slowT: 10, speed: 7 };
+  const slow = { x: -28, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0, slowT: 10, speed: 7 };
   const fast = { ...slow, slowT: 0 };
-  for (let i = 0; i < 90; i++) { stepPlayer(slow, { mx: 0, mz: 1, yaw: 0, jump: false }, DT); stepPlayer(fast, { mx: 0, mz: 1, yaw: 0, jump: false }, DT); }
-  assert.ok(Math.abs(slow.z) < Math.abs(fast.z) * 0.7, 'slow did not reduce distance covered');
+  for (let i = 0; i < 90; i++) { stepPlayer(slow, { mx: 0, mz: 1, yaw: -Math.PI / 2, jump: false }, DT); stepPlayer(fast, { mx: 0, mz: 1, yaw: -Math.PI / 2, jump: false }, DT); }
+  assert.ok(Math.abs(slow.x + 28) < Math.abs(fast.x + 28) * 0.7, 'slow did not reduce distance covered');
   const out = setup(['nova', 'dash', 'heal']);
   out.enemy.z = 18; // 10m away
   const o0 = out.enemy.hp;
@@ -173,6 +180,69 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   idle(room, 60);
   assert.equal(enemy.alive, false, 'bleed did not kill');
   assert.equal(shooter.kills, 1, 'bleed kill not credited to shooter');
+}
+
+
+// ---- Crouch: smaller hitbox, lower head, half speed, no jumping
+{
+  const { room, shooter, enemy } = setup(['dash', 'heal', 'shield']);
+  enemy.crouch = true;
+  const hit = () => room.events.some((e) => e.k === 'hit' && e.a === shooter.id && e.v === enemy.id);
+  const shotAt = (h) => { room.events = []; shooter.fireCd = 0; act(room, shooter, [enemy.x, h, enemy.z], { shoot: true }); return hit(); };
+  assert.equal(shotAt(1.5), false, 'shot above a crouched head should miss');
+  assert.equal(shotAt(0.5), true, 'body shot on crouched player should hit');
+  room.events = []; shooter.fireCd = 0; enemy.hp = enemy.maxHp;
+  act(room, shooter, [enemy.x, 1.0, enemy.z], { shoot: true });
+  assert.ok(room.events.some((e) => e.k === 'hit' && e.head), 'crouched head height (>0.8m) should count as a headshot');
+  const standing = { x: -28, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0, rootT: 0, slowT: 0, speed: 7 };
+  const crouched = { ...standing };
+  for (let i = 0; i < 90; i++) {
+    stepPlayer(standing, { mx: 0, mz: 1, yaw: -Math.PI / 2, jump: false }, DT);
+    stepPlayer(crouched, { mx: 0, mz: 1, yaw: -Math.PI / 2, jump: false, crouch: true }, DT);
+  }
+  const ratio = (crouched.x + 28) / (standing.x + 28);
+  assert.ok(ratio > 0.4 && ratio < 0.6, `crouch speed ratio ${ratio}`);
+  const j = { ...standing, x: -28, z: 0, vx: 0, vz: 0 };
+  stepPlayer(j, { mx: 0, mz: 0, yaw: 0, jump: true, crouch: true }, DT);
+  assert.equal(j.y, 0, 'crouched player jumped');
+}
+
+// ---- Shockwave: aimed shot, pushes the first enemy hit straight back, no damage
+{
+  const { room, shooter, enemy } = setup(['shockwave', 'dash', 'heal']);
+  const hp0 = enemy.hp, z0 = enemy.z;
+  act(room, shooter, [enemy.x, 1.0, enemy.z], { q: true });
+  assert.equal(enemy.hp, hp0, 'shockwave must not deal damage');
+  assert.ok(enemy.dashT > 0 && enemy.dvz < -5, 'enemy should be pushed away from the shooter');
+  for (let i = 0; i < 20; i++) { room.queueInput(enemy, { seq: 500 + i, mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false }); room.step(); }
+  assert.ok(enemy.z < z0 - 2, `enemy should have moved back (z ${z0} -> ${enemy.z})`);
+  const m = setup(['shockwave', 'dash', 'heal']);
+  act(m.room, m.shooter, [m.enemy.x + 6, 1.0, m.enemy.z], { q: true });
+  assert.equal(m.enemy.dashT, 0, 'missed shockwave pushed someone');
+}
+
+// ---- Lava hazard (Hades' Foundry): standing in the pit burns anyone, with no kill credit
+{
+  const room = new Room(2, 'foundry');
+  const p = room.players.find((q) => q.team === 0);
+  const foe = room.players.find((q) => q.team === 1);
+  for (const o of room.players) { o.isBot = false; if (o !== p && o !== foe) o.alive = false; }
+  foe.x = -20; foe.z = 25;
+  room.phase = 'live'; room.phaseT = 0; room.roundT = 999;
+  p.x = 1; p.z = 1; p.y = 0;
+  const hp0 = p.hp;
+  idle(room, 60);
+  assert.ok(hp0 - p.hp > 8, `lava did too little damage (${hp0 - p.hp})`);
+  assert.ok(p.burnT >= 0);
+  const q = new Room(2, 'foundry');
+  const r = q.players.find((x) => x.team === 0);
+  const foe2 = q.players.find((x) => x.team === 1);
+  for (const o of q.players) { o.isBot = false; if (o !== r && o !== foe2) o.alive = false; }
+  foe2.x = 20; foe2.z = 25;
+  q.phase = 'live'; q.phaseT = 0; q.roundT = 999;
+  r.x = -20; r.z = 20; r.y = 0; const h1 = r.hp;
+  idle(q, 60);
+  assert.equal(r.hp, h1, 'player away from the pit lost HP');
 }
 
 console.log('skills: ok');

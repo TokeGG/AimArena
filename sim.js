@@ -1,7 +1,7 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.4.1'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.5.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
@@ -31,8 +31,8 @@ export const SPELLS = {
   dash: { name: 'Dash', cd: 5, desc: 'Burst of speed in your move direction.' },
   shield: { name: 'Shield', cd: 14, desc: 'Take 60% less damage for 2.5s.' },
   heal: { name: 'Heal', cd: 18, desc: 'Instantly restore 35 HP.' },
-  shockwave: { name: 'Shockwave', cd: 12, desc: 'Damage and knock back enemies within 6m.' },
-  bind: { name: 'Bind', cd: 11, desc: 'Instant shot along your crosshair: roots the first enemy hit for 1.8s.' },
+  shockwave: { name: 'Shockwave', cd: 10, desc: 'Aimed shot: pushes the first enemy hit back. No damage.' },
+  bind: { name: 'Bind', cd: 11, desc: 'Your next rifle shot roots the enemy it hits for 1.8s (6s to use it).' },
   firepool: { name: 'Fire Pool', cd: 14, desc: 'Ignite the ground where you aim: 3m wide, burns enemies for 5s.' },
   nova: { name: 'Frost Nova', cd: 12, desc: 'Blast within 5m: 12 damage and 3s slow on enemies.' },
   incendiary: { name: 'Incendiary Rounds', cd: 16, desc: '6s: rifle hits leave fire under the target\'s feet.' },
@@ -56,46 +56,21 @@ export const DEFAULT_MODEL = 'striker';
 export const SLOW_FACTOR = 0.55;
 
 // ---------------------------------------------------------------- map
-// Every piece below is point-mirrored (x,z) -> (-x,-z), so both teams get the identical layout.
-// Each team spawns in a pocket behind a long "shield wall" with exits at its two corners, so
-// the two spawns can never see each other.
+// Map layouts live in maps.js. The sim works on ONE "current" map at a time (WALLS / HAZARDS):
+// the server calls useMap(room.mapId) before it steps a room, the browser calls it once on join.
+import { MAPS, MAP_IDS, DEFAULT_MAP } from './maps.js';
+export { MAPS, MAP_IDS, DEFAULT_MAP };
 export const SHIELD_WALL_H = 3.5;
-function buildWalls() {
-  const walls = [];
-  const box = (cx, cz, w, d, h, kind = 'cover') => ({
-    minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, h, kind,
-  });
-  // centre temple
-  walls.push(box(0, 0, 5, 5, 3.5, 'temple'));
-  // spawn pocket: shield wall + back-side walls (corner exits are 3.4m wide)
-  const spawn = [
-    [0, -19.5, 20, 1.2, SHIELD_WALL_H, 'shield'],
-    [-10.6, -26.75, 1.2, 6.5, SHIELD_WALL_H, 'shield'],
-    [10.6, -26.75, 1.2, 6.5, SHIELD_WALL_H, 'shield'],
-  ];
-  // cover on one half of the map
-  const half = [
-    [-20, -12, 6, 1.5, 3],
-    [20, -8, 1.5, 6, 3],
-    [-8, -11, 4, 1.2, 1.0], // low walls: jump onto them, shoot over them
-    [9, -14, 3, 3, 3],
-    [-14, -5, 2.5, 2.5, 3],
-    [6, -6, 1.2, 5, 3],
-    [0, -12, 6, 1.2, 1.0],
-    [-26, -4, 4, 1.5, 3],
-    [26, -15, 4, 1.5, 3],
-  ];
-  for (const [x, z, w, d, h, kind] of spawn) {
-    walls.push(box(x, z, w, d, h, kind));
-    walls.push(box(-x, -z, w, d, h, kind));
-  }
-  for (const [x, z, w, d, h] of half) {
-    walls.push(box(x, z, w, d, h, h < 2 ? 'low' : 'cover'));
-    walls.push(box(-x, -z, w, d, h, h < 2 ? 'low' : 'cover'));
-  }
-  return walls;
+export let WALLS = MAPS[DEFAULT_MAP].walls;
+export let HAZARDS = MAPS[DEFAULT_MAP].hazards;
+let curMap = DEFAULT_MAP;
+export function useMap(id) {
+  if (id === curMap) return;
+  const m = MAPS[id] || MAPS[DEFAULT_MAP];
+  curMap = MAPS[id] ? id : DEFAULT_MAP;
+  WALLS = m.walls;
+  HAZARDS = m.hazards;
 }
-export const WALLS = buildWalls();
 
 export function spawnPoint(team, slot, size) {
   const x = (slot - (size - 1) / 2) * 4;
@@ -226,12 +201,12 @@ export function rayWorld(ox, oy, oz, dx, dy, dz, maxT) {
 }
 
 /** Ray vs. a standing player (vertical cylinder). Returns {t, head} or null. */
-export function rayPlayer(ox, oy, oz, dx, dy, dz, p) {
+export function rayPlayer(ox, oy, oz, dx, dy, dz, p, radius = HIT_R) {
   const a = dx * dx + dz * dz;
   if (a < 1e-9) return null;
   const fx = ox - p.x, fz = oz - p.z;
   const b = 2 * (fx * dx + fz * dz);
-  const c = fx * fx + fz * fz - HIT_R * HIT_R;
+  const c = fx * fx + fz * fz - radius * radius;
   const disc = b * b - 4 * a * c;
   if (disc < 0) return null;
   const t = (-b - Math.sqrt(disc)) / (2 * a);

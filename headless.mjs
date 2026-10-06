@@ -3,16 +3,17 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import os from 'node:os';
 import { Room } from '../game.js';
-import { stepPlayer, DT, ARENA, WALLS } from '../shared/sim.js';
+import { stepPlayer, DT, ARENA, WALLS, useMap } from '../sim.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // ------------------------------------------------------------ 1. bot-only matches
-for (const mode of [2, 3]) {
-  const room = new Room(mode);
+for (const [mode, mapId] of [[2, 'olympus'], [3, 'olympus'], [2, 'foundry'], [3, 'foundry'], [3, 'frostpeak'], [2, 'frostpeak'], [2, 'labyrinth'], [3, 'labyrinth']]) {
+  const room = new Room(mode, mapId);
   assert.equal(room.players.length, mode * 2);
-  let matchEnds = 0, rounds = 0, shots = 0, hits = 0, kills = 0;
+  let matchEnds = 0, rounds = 0, shots = 0, hits = 0, kills = 0, timeouts = 0;
   const spells = {};
   let prevPhase = room.phase;
   const maxTicks = 60 * 60 * 25; // 25 simulated minutes
@@ -22,7 +23,7 @@ for (const mode of [2, 3]) {
       if (e.k === 'shot') shots++;
       if (e.k === 'hit') hits++;
       if (e.k === 'kill') kills++;
-      if (e.k === 'round') rounds++;
+      if (e.k === 'round') { rounds++; if (room.roundT <= 0.05) timeouts++; }
       if (e.k === 'spell') spells[e.s] = (spells[e.s] || 0) + 1;
     }
     room.events.length = 0;
@@ -41,16 +42,18 @@ for (const mode of [2, 3]) {
       }
     }
   }
-  console.log(`mode ${mode}v${mode}: matchEnds=${matchEnds} rounds=${rounds} shots=${shots} hits=${hits} kills=${kills} spells=${JSON.stringify(spells)} scores=${room.scores}`);
+  console.log(`${mapId} ${mode}v${mode}: matchEnds=${matchEnds} rounds=${rounds} shots=${shots} hits=${hits} kills=${kills} spells=${JSON.stringify(spells)} scores=${room.scores} timeouts=${timeouts}/${rounds}`);
+  assert.ok(timeouts <= rounds * 0.4, `too many rounds ran out the clock (${timeouts}/${rounds}): bots may be stuck`);
   assert.ok(matchEnds >= 1, 'bots never finished a match');
   assert.ok(kills > 0 && hits > 0, 'bots never hit anything');
 }
 
 // ------------------------------------------------------------ 2. movement sanity
+useMap('olympus');
 {
-  const p = { x: -25, y: 0, z: 25, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0 };
-  for (let i = 0; i < 120; i++) stepPlayer(p, { mx: 0, mz: 1, yaw: 0, jump: false }, DT); // walk -Z for 2s
-  assert.ok(p.z < 25 - 10 && p.z > 25 - 15, `unexpected walk distance, z=${p.z}`);
+  const p = { x: -28, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0 };
+  for (let i = 0; i < 120; i++) stepPlayer(p, { mx: 0, mz: 1, yaw: -Math.PI / 2, jump: false }, DT); // walk +X for 2s
+  assert.ok(p.x > -28 + 10 && p.x < -28 + 15, `unexpected walk distance, x=${p.x}`);
   const q = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0 };
   stepPlayer(q, { mx: 0, mz: 0, yaw: 0, jump: true }, DT);
   assert.ok(q.vy > 0 && q.y > 0, 'jump failed');
@@ -58,7 +61,7 @@ for (const mode of [2, 3]) {
 
 // ------------------------------------------------------------ 3. real server + websocket
 const port = 3900 + Math.floor(Math.random() * 90);
-const srv = spawn('node', ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'inherit'] });
+const srv = spawn('node', ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), DATA_DIR: path.join(os.tmpdir(), 'aim-test-' + port) }, stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((res, rej) => {
   srv.stdout.on('data', (d) => { if (String(d).includes('running')) res(); });
   srv.on('exit', (c) => rej(new Error('server exited ' + c)));
@@ -68,7 +71,7 @@ await new Promise((res, rej) => {
 try {
   const html = await (await fetch(`http://localhost:${port}/`)).text();
   assert.ok(html.includes('Aim Arena'), 'index.html not served');
-  const js = await fetch(`http://localhost:${port}/shared/sim.js`);
+  const js = await fetch(`http://localhost:${port}/sim.js`);
   assert.equal(js.status, 200);
   assert.equal((await fetch(`http://localhost:${port}/../server.js`)).status === 200 && false, false);
 
@@ -115,6 +118,78 @@ try {
   console.log(`websocket: ok (ack=${end.me.ack}, moved=${moved.toFixed(1)}m, snapshots=${msgs.filter((m) => m.t === 's').length})`);
   ws.close();
   await new Promise((r) => setTimeout(r, 200));
+
+  // ---- map choice + team choice in quick play
+  {
+    const w2 = new WebSocket(`ws://localhost:${port}`);
+    const got = [];
+    w2.onmessage = (e) => got.push(JSON.parse(e.data));
+    await new Promise((r, j) => { w2.onopen = r; w2.onerror = j; });
+    w2.send(JSON.stringify({ t: 'join', name: 'MapTester', mode: 2, map: 'foundry', team: 1, queue: 'quick', loadout: ['shockwave', 'bind', 'dash'], model: 'warden' }));
+    await new Promise((r) => setTimeout(r, 300));
+    const w = got.find((m) => m.t === 'welcome');
+    assert.ok(w, 'no welcome for foundry');
+    assert.equal(w.map, 'foundry');
+    assert.equal(w.team, 1, 'team choice ignored');
+    assert.equal(w.ranked, false);
+    w2.close();
+  }
+
+  // ---- accounts + ranked matchmaking
+  {
+    const base = `http://localhost:${port}`;
+    const post = (p, body, token) => fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, ...(await r.json()) }));
+    const st = await (await fetch(base + '/api/status')).json();
+    assert.equal(st.persistent, false);
+    const bad = await post('/api/signup', { username: 'x', password: 'abc' });
+    assert.equal(bad.ok, false);
+    const su = await post('/api/signup', { username: 'RankTest', password: 'secret123' });
+    assert.equal(su.ok, true, JSON.stringify(su));
+    assert.equal(su.profile.rating, 1000);
+    assert.equal((await post('/api/signup', { username: 'ranktest', password: 'secret123' })).ok, false, 'duplicate name accepted');
+    assert.equal((await post('/api/login', { username: 'RankTest', password: 'nope-nope' })).ok, false);
+    const li = await post('/api/login', { username: 'ranktest', password: 'secret123' });
+    assert.equal(li.ok, true);
+    const me = await (await fetch(base + '/api/me', { headers: { Authorization: `Bearer ${li.token}` } })).json();
+    assert.equal(me.profile.username, 'RankTest');
+
+    // ranked without an account is refused
+    const g = new WebSocket(`ws://localhost:${port}`);
+    const gm = [];
+    g.onmessage = (e) => gm.push(JSON.parse(e.data));
+    await new Promise((r, j) => { g.onopen = r; g.onerror = j; });
+    g.send(JSON.stringify({ t: 'join', name: 'Guest', mode: 2, queue: 'ranked' }));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(gm.find((m) => m.t === 'error'), 'guest allowed into ranked');
+    g.close();
+
+    // ranked with an account: searching message, then a room with bots after the wait; named after the account
+    const rw = new WebSocket(`ws://localhost:${port}`);
+    const rm = [];
+    rw.onmessage = (e) => rm.push(JSON.parse(e.data));
+    await new Promise((r, j) => { rw.onopen = r; rw.onerror = j; });
+    rw.send(JSON.stringify({ t: 'join', name: 'ignored', mode: 2, map: 'labyrinth', queue: 'ranked', token: li.token, loadout: ['dash', 'heal', 'shield'], model: 'vanguard' }));
+    await new Promise((r) => setTimeout(r, 1200));
+    assert.ok(rm.find((m) => m.t === 'queue'), 'no queue message');
+    assert.ok(!rm.find((m) => m.t === 'welcome'), 'placed too early');
+    for (let i = 0; i < 100 && !rm.find((m) => m.t === 'welcome'); i++) await new Promise((r) => setTimeout(r, 200));
+    const rwl = rm.find((m) => m.t === 'welcome');
+    assert.ok(rwl, 'ranked search never produced a match');
+    assert.equal(rwl.ranked, true);
+    assert.equal(rwl.map, 'labyrinth');
+    assert.equal(rwl.name, 'RankTest');
+    assert.equal(rwl.rating, 1000);
+    // cancel path: leave before being placed
+    rw.close();
+    const cw = new WebSocket(`ws://localhost:${port}`);
+    await new Promise((r, j) => { cw.onopen = r; cw.onerror = j; });
+    cw.send(JSON.stringify({ t: 'join', mode: 3, map: 'frostpeak', queue: 'ranked', token: li.token }));
+    await new Promise((r) => setTimeout(r, 400));
+    cw.send(JSON.stringify({ t: 'cancel' }));
+    await new Promise((r) => setTimeout(r, 300));
+    cw.close();
+    console.log('accounts + ranked queue: ok');
+  }
 } finally {
   srv.kill();
 }

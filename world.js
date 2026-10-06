@@ -1,19 +1,31 @@
-// Visual theme: "Olympus at night" - starry sky, dark marble and gold, torch light, distant mountains.
-// Everything here is decoration; collision comes from WALLS in sim.js.
+// Visual themes for every arena (see maps.js for the theme data): night sky, dark stone, gold trim, torch light.
+// Everything here is decoration; collision comes from the map's walls in maps.js.
 import * as THREE from 'three';
-import { ARENA, WALLS } from './sim.js';
+import { ARENA, MAPS, DEFAULT_MAP } from './sim.js';
 
 export const TEAM_COLOR = [0x3b82ff, 0xff5436];
-const GOLD = 0xd4a73a;
-const HAZE = 0x140f24;
+const css = (hex) => `#${hex.toString(16).padStart(6, '0')}`;
+const mix = (a, b, t) => {
+  const ch = (h, sh) => (h >> sh) & 255;
+  const m = (sh) => Math.round(ch(a, sh) + (ch(b, sh) - ch(a, sh)) * t);
+  return (m(16) << 16) | (m(8) << 8) | m(0);
+};
 
 const mat = (color, roughness = 0.6, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
-const MARBLE = mat(0x77748c, 0.35, 0.1);
-const MARBLE_DARK = mat(0x4b485f, 0.45, 0.05);
-const SAND = mat(0x5e5148, 0.85);
-const SAND_DARK = mat(0x483e39, 0.9);
-const GOLD_MAT = mat(GOLD, 0.35, 0.6);
-GOLD_MAT.emissive = new THREE.Color(0x3d2c06);
+// stone / trim materials of the arena currently being built (replaced by applyTheme)
+let MARBLE, MARBLE_DARK, SAND, SAND_DARK, GOLD_MAT;
+let THEME = null;
+function applyTheme(t) {
+  THEME = t;
+  MARBLE = mat(t.marble, 0.35, 0.1);
+  MARBLE_DARK = mat(t.marbleDark, 0.45, 0.05);
+  SAND = mat(t.sand, 0.85);
+  SAND_DARK = mat(t.sandDark, 0.9);
+  GOLD_MAT = mat(t.gold, 0.35, 0.6);
+  GOLD_MAT.emissive = new THREE.Color(mix(t.gold, 0x000000, 0.8));
+  flameMats[0].color.setHex(t.torch);
+  flameMats[1].color.setHex(mix(t.torch, 0xffffff, 0.5));
+}
 
 function canvasTexture(w, h, draw, repeat) {
   const c = document.createElement('canvas');
@@ -26,43 +38,40 @@ function canvasTexture(w, h, draw, repeat) {
   return t;
 }
 
-function skyTexture() {
+function skyTexture(t) {
   return canvasTexture(1024, 512, (g, w, h) => {
     const grad = g.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0.0, '#03040c');
-    grad.addColorStop(0.3, '#0a0d24');
-    grad.addColorStop(0.46, '#2a1a45');
-    grad.addColorStop(0.5, '#5a3560');
-    grad.addColorStop(0.56, '#2b1a40');
-    grad.addColorStop(1.0, '#140f24');
+    for (const [at, color] of t.sky) grad.addColorStop(at, color);
     g.fillStyle = grad;
     g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 380; i++) {
-      const y = Math.random() * h * 0.46;
-      g.fillStyle = `rgba(255,255,255,${0.25 + Math.random() * 0.7})`;
-      const r = Math.random() < 0.12 ? 2 : 1;
-      g.fillRect(Math.random() * w, y, r, r);
+    if (t.stars) {
+      for (let i = 0; i < 380; i++) {
+        const y = Math.random() * h * 0.46;
+        g.fillStyle = `rgba(255,255,255,${0.25 + Math.random() * 0.7})`;
+        const r = Math.random() < 0.12 ? 2 : 1;
+        g.fillRect(Math.random() * w, y, r, r);
+      }
     }
   });
 }
 
-function floorTexture() {
+function floorTexture(t) {
   const S = 1024, k = S / (ARENA * 2);
   return canvasTexture(S, S, (g) => {
-    g.fillStyle = '#4a4458';
+    g.fillStyle = t.floor;
     g.fillRect(0, 0, S, S);
     // checker tint + speckle so the floor reads as stone slabs
     const tile = 4 * k;
     for (let iz = 0; iz < 15; iz++) {
       for (let ix = 0; ix < 15; ix++) {
-        if ((ix + iz) % 2 === 0) { g.fillStyle = 'rgba(190,180,230,.07)'; g.fillRect(ix * tile, iz * tile, tile, tile); }
+        if ((ix + iz) % 2 === 0) { g.fillStyle = t.floorTint; g.fillRect(ix * tile, iz * tile, tile, tile); }
       }
     }
     for (let i = 0; i < 7000; i++) {
       g.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,.07)' : 'rgba(200,200,255,.04)';
       g.fillRect(Math.random() * S, Math.random() * S, 2 + Math.random() * 3, 2 + Math.random() * 3);
     }
-    g.strokeStyle = 'rgba(10,6,20,.6)';
+    g.strokeStyle = t.floorLine;
     g.lineWidth = 2;
     for (let i = 0; i <= 15; i++) {
       g.beginPath(); g.moveTo(i * tile, 0); g.lineTo(i * tile, S); g.moveTo(0, i * tile); g.lineTo(S, i * tile); g.stroke();
@@ -77,7 +86,7 @@ function floorTexture() {
     // centre emblem: gold rings + sun rays
     g.save();
     g.translate(S / 2, S / 2);
-    g.strokeStyle = '#b3862a';
+    g.strokeStyle = css(mix(t.accent, 0x000000, 0.2));
     g.lineWidth = 7;
     for (const r of [10.5, 8.2]) { g.beginPath(); g.arc(0, 0, r * k, 0, Math.PI * 2); g.stroke(); }
     g.lineWidth = 4;
@@ -191,7 +200,7 @@ function torch(scene, x, z, h = 1.25, lit = false) {
     flames.push(f);
   }
   if (lit) { // real lights are costly: only the four central braziers get one
-    const light = new THREE.PointLight(0xff9a45, 55, 24, 2);
+    const light = new THREE.PointLight(THEME.torch, 55, 24, 2);
     light.position.set(0, h + 0.9, 0);
     g.add(light);
     torchLights.push(light);
@@ -250,29 +259,35 @@ function buildWallMesh(scene, w) {
 }
 
 // ------------------------------------------------------------------ world
-export function buildWorld(scene) {
+export function buildWorld(parent, mapId = DEFAULT_MAP) {
+  const map = MAPS[mapId] || MAPS[DEFAULT_MAP];
+  const T0 = map.theme;
+  applyTheme(T0);
+  flames.length = 0; torchLights.length = 0;
+  const scene = new THREE.Group(); // everything we build lives in here so a different arena can replace it
+  parent.add(scene);
   batchScene = scene;
-  scene.background = new THREE.Color(HAZE);
-  scene.fog = new THREE.Fog(HAZE, 45, 170);
+  parent.background = new THREE.Color(T0.haze);
+  parent.fog = new THREE.Fog(T0.haze, 45, 170);
 
   // sky dome follows the camera
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(260, 32, 16),
-    new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, fog: false, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ map: skyTexture(T0), side: THREE.BackSide, fog: false, depthWrite: false }),
   );
   sky.renderOrder = -10;
   scene.add(sky);
   // sun disc + halo, low on the horizon
   const sunDir = new THREE.Vector3(-0.5, 0.42, -0.76).normalize();
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(11, 32), new THREE.MeshBasicMaterial({ color: 0xe8efff, fog: false, depthWrite: false }));
-  const halo = new THREE.Mesh(new THREE.CircleGeometry(40, 32), new THREE.MeshBasicMaterial({ color: 0x7f95ff, transparent: true, opacity: 0.16, fog: false, depthWrite: false }));
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(11, 32), new THREE.MeshBasicMaterial({ color: T0.moonDisc, fog: false, depthWrite: false }));
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(40, 32), new THREE.MeshBasicMaterial({ color: T0.moonHalo, transparent: true, opacity: 0.16, fog: false, depthWrite: false }));
   for (const m of [sunDisc, halo]) { m.position.copy(sunDir).multiplyScalar(240); m.lookAt(0, 0, 0); scene.add(m); }
   halo.renderOrder = -9; sunDisc.renderOrder = -8;
 
   // lights
-  const hemi = new THREE.HemisphereLight(0x7084cc, 0x2a2236, 0.95);
+  const hemi = new THREE.HemisphereLight(T0.hemi[0], T0.hemi[1], T0.hemi[2]);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xaec2ff, 1.25);
+  const sun = new THREE.DirectionalLight(T0.moon[0], T0.moon[1]);
   sun.position.set(-40, 48, -55);
   sun.shadow.camera.left = -50; sun.shadow.camera.right = 50;
   sun.shadow.camera.top = 50; sun.shadow.camera.bottom = -50;
@@ -283,18 +298,18 @@ export function buildWorld(scene) {
   scene.add(sun);
 
   // floor
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: floorTexture(), roughness: 0.92 }));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: floorTexture(T0), roughness: 0.92 }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
   // ground outside the arena
-  const outer = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: 0x1d1a26, roughness: 1 }));
+  const outer = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: T0.ground, roughness: 1 }));
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.02;
   scene.add(outer);
 
   // gameplay walls
-  for (const w of WALLS) buildWallMesh(scene, w);
+  for (const w of map.walls) buildWallMesh(scene, w);
 
   // outer colonnade wall with pilasters and a gold frieze
   const T = 2, H = 9;
@@ -323,11 +338,38 @@ export function buildWorld(scene) {
   }
 
   // torches: spawn pocket corners + mid-wall braziers
-  for (const [x, z] of [[9.2, -29], [-9.2, -29], [9.2, 29], [-9.2, 29]]) torch(scene, x, z);
-  for (const [x, z] of [[-29, 0], [29, 0], [0, -17.6], [0, 17.6]]) torch(scene, x, z, 1.25, true);
+  const clear = (x, z) => !map.walls.some((w) => x > w.minX - 0.9 && x < w.maxX + 0.9 && z > w.minZ - 0.9 && z < w.maxZ + 0.9)
+    && !(map.hazards || []).some((h) => Math.hypot(x - h.x, z - h.z) < h.r + 1.2);
+  for (const [x, z] of [[9.2, -29], [-9.2, -29], [9.2, 29], [-9.2, 29]]) if (clear(x, z)) torch(scene, x, z);
+  for (const [x, z] of [[-29, 0], [29, 0], [0, -17.6], [0, 17.6]]) if (clear(x, z)) torch(scene, x, z, 1.25, true);
+
+  // hazards (lava pits): glowing animated disc, dark rim stones and flames
+  const lava = [];
+  for (const h of map.hazards || []) {
+    const lm = new THREE.MeshBasicMaterial({ color: 0xff4a10 });
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(h.r, 48), lm);
+    disc.rotation.x = -Math.PI / 2; disc.position.set(h.x, 0.04, h.z);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(h.r + 0.15, 0.22, 8, 48), SAND_DARK);
+    rim.rotation.x = Math.PI / 2; rim.position.set(h.x, 0.1, h.z);
+    scene.add(disc, rim);
+    lava.push(lm);
+    for (let i = 0; i < 9; i++) {
+      const f = new THREE.Mesh(flameGeo, flameMats[i % 2]);
+      const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * (h.r - 0.5);
+      f.position.set(h.x + Math.cos(a) * d, 0.05, h.z + Math.sin(a) * d);
+      f.scale.set(1.6, 1.6, 1.6);
+      f.userData.phase = Math.random() * 6.28;
+      scene.add(f);
+      flames.push(f);
+    }
+    const glow = new THREE.PointLight(0xff5a1a, 90, 26, 2);
+    glow.position.set(h.x, 2.2, h.z);
+    scene.add(glow);
+    torchLights.push(glow);
+  }
 
   // distant mountains (hazy silhouettes)
-  const mtnMat = new THREE.MeshStandardMaterial({ color: 0x1c1730, roughness: 1, flatShading: true });
+  const mtnMat = new THREE.MeshStandardMaterial({ color: T0.mountain, roughness: 1, flatShading: true });
   for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2 + Math.random() * 0.2;
     const r = 150 + Math.random() * 30;
@@ -338,7 +380,7 @@ export function buildWorld(scene) {
   }
   // drifting clouds
   const clouds = [];
-  const cloudMat = new THREE.MeshBasicMaterial({ color: 0x4a3f6e, transparent: true, opacity: 0.35, fog: false, depthWrite: false });
+  const cloudMat = new THREE.MeshBasicMaterial({ color: T0.cloud, transparent: true, opacity: 0.35, fog: false, depthWrite: false });
   for (let i = 0; i < 9; i++) {
     const c = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), cloudMat);
     c.scale.set(24 + Math.random() * 20, 4 + Math.random() * 3, 9 + Math.random() * 6);
@@ -355,6 +397,7 @@ export function buildWorld(scene) {
       const s = 0.75 + 0.45 * Math.sin(now / 85 + f.userData.phase);
       f.scale.set(1, s, 1);
     }
+    for (const lm of lava) lm.color.setRGB(1, 0.2 + 0.12 * Math.sin(now / 260), 0.04);
     for (const c of clouds) {
       c.position.x += c.userData.speed * 0.016;
       if (c.position.x > 200) c.position.x = -200;
@@ -378,7 +421,10 @@ export function buildWorld(scene) {
     });
   }
 
-  return { update, setQuality, sun };
+  /** Remove this arena from the scene (used when the next match is on another map). */
+  function dispose() { parent.remove(scene); flames.length = 0; torchLights.length = 0; }
+
+  return { update, setQuality, sun, dispose, map };
 }
 
 // ------------------------------------------------------------------ menu showroom

@@ -1,11 +1,12 @@
 // Authoritative game room: players, bots, rounds, hitscan, skills, status effects.
 import {
   DT, eyeH, FIRE_INTERVAL, BODY_DMG, HEAD_DMG, RANGE, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT,
-  ARENA, WALLS, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint,
+  ARENA, WALLS, HAZARDS, DEFAULT_MAP, MAPS, useMap, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint,
 } from './sim.js';
 
 export const WIN_ROUNDS = 3;
 export const ROUND_TIME = 90;
+export const MATCH_END_TIME = 15; // seconds players get to re-pick champion + skills after a match
 export const MAX_REWIND = 24; // ticks (400 ms at 60 Hz): the most a shot can be rewound
 
 // tuning
@@ -13,7 +14,9 @@ const FIRE_TOLERANCE = 0.06; // seconds
 const BUFF_TIME = 6;
 const BURN_DPS = 14, BURN_LINGER = 1.2, BURN_ON_HIT = 3;
 const BLEED_DPS = 6, BLEED_MOVING_MULT = 1.8, BLEED_TIME = 4;
-const BIND_TIME = 1.8, BIND_RANGE = 35;
+const BIND_TIME = 1.8;
+const SHOCK_RANGE = 30, SHOCK_RADIUS = 0.9, SHOCK_PUSH = 24;
+const HAZARD_BURN = 1.0;
 const POOL_RANGE = 30, POOL_RADIUS = 3, POOL_TIME = 5;
 const HIT_FIRE_RADIUS = 2.2, HIT_FIRE_TIME = 3.5;
 const BLAST_RADIUS = 3, BLAST_DMG = 14;
@@ -68,7 +71,7 @@ function applyModel(p, key) {
 
 function clearStatuses(p) {
   p.rootT = 0; p.slowT = 0; p.burnT = 0; p.bleedT = 0; p.burnSrc = null; p.bleedSrc = null;
-  p.fireBuffT = 0; p.bleedBuffT = 0; p.blastBuffT = 0;
+  p.fireBuffT = 0; p.bleedBuffT = 0; p.blastBuffT = 0; p.bindBuffT = 0;
 }
 
 function makePlayer(team, slot, isBot, name) {
@@ -89,8 +92,12 @@ function makePlayer(team, slot, isBot, name) {
 }
 
 export class Room {
-  constructor(mode) {
+  constructor(mode, mapId = DEFAULT_MAP, opts = {}) {
     this.mode = mode;
+    this.mapId = MAPS[mapId] ? mapId : DEFAULT_MAP;
+    this.ranked = !!opts.ranked;
+    this.onMatchEnd = opts.onMatchEnd || null; // (room, winnerTeam) when a ranked match ends
+    this.onForfeit = opts.onForfeit || null;   // (room, player) when a human leaves a ranked match early
     this.size = mode;
     this.players = [];
     this.zones = [];
@@ -117,10 +124,12 @@ export class Room {
   hasBot() { return this.players.some((p) => p.isBot); }
 
   // -------------------------------------------------------------- membership
-  addHuman(ws, name, loadout, model) {
+  /** opts.team: 0/1 = that team only, anything else = whichever team has fewer humans. */
+  addHuman(ws, name, loadout, model, opts = {}) {
     const humanCount = [0, 0];
     for (const p of this.players) if (!p.isBot) humanCount[p.team]++;
-    const order = humanCount[0] <= humanCount[1] ? [0, 1] : [1, 0];
+    let order = humanCount[0] <= humanCount[1] ? [0, 1] : [1, 0];
+    if (opts.team === 0 || opts.team === 1) order = [opts.team];
     for (const team of order) {
       const bot = this.players.find((p) => p.isBot && p.team === team);
       if (bot) {
@@ -136,6 +145,9 @@ export class Room {
         bot.cd = [0, 0, 0];
         bot.kills = 0;
         bot.deaths = 0;
+        bot.uid = opts.uid || null;
+        bot.rating = opts.rating || 1000;
+        bot.startRating = bot.rating;
         this.emptyT = 0;
         return bot;
       }
@@ -143,7 +155,26 @@ export class Room {
     return null;
   }
 
+  /** Open slots a human could take on each team: [team0, team1]. */
+  openSlots() {
+    const o = [0, 0];
+    for (const p of this.players) if (p.isBot) o[p.team]++;
+    return o;
+  }
+
+  /** Apply a champion / skill re-pick (only during the post-match window). */
+  setPick(p, model, loadout) {
+    if (this.phase !== 'matchEnd' || p.isBot) return false;
+    p.nextModel = MODELS[model] ? model : p.model;
+    const out = [];
+    if (Array.isArray(loadout)) for (const id of loadout) if (SPELLS[id] && !out.includes(id) && out.length < SLOT_COUNT) out.push(id);
+    if (out.length === SLOT_COUNT) p.nextLoadout = out;
+    return true;
+  }
+
   removeHuman(p) {
+    if (this.ranked && this.onForfeit && p.uid && this.phase !== 'matchEnd' && this.winner < 0) this.onForfeit(this, p);
+    p.uid = null;
     p.isBot = true;
     p.ws = null;
     p.name = BOT_NAMES[botNameIdx++ % BOT_NAMES.length];
@@ -194,8 +225,9 @@ export class Room {
     this.events.push({ k: 'round', w });
     if (w >= 0 && this.scores[w] >= WIN_ROUNDS) {
       this.phase = 'matchEnd';
-      this.phaseT = 8;
+      this.phaseT = MATCH_END_TIME;
       this.winner = w;
+      if (this.ranked && this.onMatchEnd) this.onMatchEnd(this, w);
     } else {
       this.phase = 'roundEnd';
       this.phaseT = 3.5;
@@ -204,6 +236,8 @@ export class Room {
 
   // -------------------------------------------------------------- tick
   step() {
+    useMap(this.mapId);
+    useNav(this.mapId);
     this.tick++;
     this.time += DT;
     const dt = DT;
@@ -224,7 +258,13 @@ export class Room {
           this.round = 1;
           this.winner = -1;
           this.lastWinner = -1;
-          for (const p of this.players) { p.kills = 0; p.deaths = 0; }
+          for (const p of this.players) {
+            p.kills = 0; p.deaths = 0;
+            if (p.nextLoadout) { p.loadout = p.nextLoadout; p.nextLoadout = null; }
+            if (p.nextModel) { applyModel(p, p.nextModel); p.nextModel = null; }
+            if (p.isBot) { applyModel(p, pick(MODEL_IDS)); p.loadout = randomLoadout(); }
+            if (!p.isBot) p.startRating = p.rating; // ratings may have changed at the end of the last match
+          }
           this.resetRound();
           this.phase = 'countdown';
           this.phaseT = 5;
@@ -239,6 +279,7 @@ export class Room {
       p.fireBuffT = Math.max(0, p.fireBuffT - dt);
       p.bleedBuffT = Math.max(0, p.bleedBuffT - dt);
       p.blastBuffT = Math.max(0, p.blastBuffT - dt);
+      p.bindBuffT = Math.max(0, p.bindBuffT - dt);
 
       if (this.phase === 'countdown') {
         if (p.queue.length) {
@@ -322,6 +363,9 @@ export class Room {
   tickStatuses(dt) {
     for (const p of this.players) {
       if (!p.alive) continue;
+      for (const h of HAZARDS) {
+        if (p.y < 1.0 && Math.hypot(p.x - h.x, p.z - h.z) < h.r) this.ignite(p, null, HAZARD_BURN);
+      }
       if (p.burnT > 0) {
         p.burnT -= dt;
         this.dot(p, BURN_DPS * dt, p.burnSrc);
@@ -362,6 +406,8 @@ export class Room {
   // -------------------------------------------------------------- combat
   shoot(p, inp) {
     p.fireCd = FIRE_INTERVAL;
+    const bindShot = p.bindBuffT > 0; // Bind: this shot roots whoever it hits (used up even on a miss)
+    p.bindBuffT = 0;
     const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
     const ox = p.x, oy = p.y + eyeH(p), oz = p.z;
     const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, RANGE), RANGE);
@@ -370,20 +416,26 @@ export class Room {
     if (!best && dy < 0) t = Math.min(t, -oy / dy); // floor
     this.events.push({
       k: 'shot', id: p.id, ox: r2(ox), oy: r2(oy), oz: r2(oz),
-      ex: r2(ox + dx * t), ey: r2(oy + dy * t), ez: r2(oz + dz * t), hit: best ? 1 : 0,
+      ex: r2(ox + dx * t), ey: r2(oy + dy * t), ez: r2(oz + dz * t), hit: best ? 1 : 0, bd: bindShot ? 1 : 0,
     });
     if (best) {
+      if (bindShot) {
+        const v = best.who;
+        v.rootT = BIND_TIME;
+        v.vx = 0; v.vz = 0; v.dashT = 0; v.dvx = 0; v.dvz = 0;
+        this.events.push({ k: 'bound', v: v.id });
+      }
       this.damage(best.who, best.head ? HEAD_DMG : BODY_DMG, p, best.head);
       this.onRifleHit(p, best.who);
     }
   }
 
   /** Nearest living enemy along the ray (enemies rewound to the shooter's view time). */
-  firstEnemyHit(p, ox, oy, oz, dx, dy, dz, maxT, vt) {
+  firstEnemyHit(p, ox, oy, oz, dx, dy, dz, maxT, vt, radius) {
     let best = null;
     for (const o of this.players) {
       if (o.team === p.team || !o.alive) continue;
-      const r = rayPlayer(ox, oy, oz, dx, dy, dz, this.rewound(o, vt));
+      const r = rayPlayer(ox, oy, oz, dx, dy, dz, this.rewound(o, vt), radius);
       if (r && r.t < maxT && (!best || r.t < best.t)) best = { t: r.t, head: r.head, who: o };
     }
     return best;
@@ -457,33 +509,23 @@ export class Room {
       case 'heal':
         p.hp = Math.min(p.maxHp, p.hp + 35 * p.healMult);
         break;
-      case 'shockwave':
-        for (const o of this.players) {
-          if (o.team === p.team || !o.alive) continue;
-          const ex = o.x - p.x, ez = o.z - p.z;
-          const d = Math.hypot(ex, ez);
-          if (d > 6 || Math.abs(o.y - p.y) > 3) continue;
-          const nx = d > 0.01 ? ex / d : 0, nz = d > 0.01 ? ez / d : 1;
-          o.dvx = nx * 20; o.dvz = nz * 20; o.dashT = 0.25; o.vy = 5;
-          this.damage(o, 25, p, false);
-        }
-        break;
-      case 'bind': {
-        const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, BIND_RANGE), BIND_RANGE);
-        const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt);
+      case 'shockwave': { // aimed shot: pushes the first enemy hit straight back, no damage
+        const tWall = Math.min(rayWalls(ox, oy, oz, dx, dy, dz, SHOCK_RANGE), SHOCK_RANGE);
+        const best = this.firstEnemyHit(p, ox, oy, oz, dx, dy, dz, tWall, inp.vt, SHOCK_RADIUS);
         let t = best ? best.t : tWall;
         if (!best && dy < 0) t = Math.min(t, -oy / dy);
         if (best) {
           const v = best.who;
-          v.rootT = BIND_TIME;
-          v.vx = 0; v.vz = 0; v.dashT = 0; v.dvx = 0; v.dvz = 0;
-          this.events.push({ k: 'bound', v: v.id });
+          const hl = Math.hypot(dx, dz) || 1;
+          v.dvx = (dx / hl) * SHOCK_PUSH; v.dvz = (dz / hl) * SHOCK_PUSH; v.dashT = 0.3; v.vy = 4;
+          this.events.push({ k: 'pushed', v: v.id });
         }
         ev.ox = r2(ox); ev.oy = r2(oy); ev.oz = r2(oz);
         ev.ex = r2(ox + dx * t); ev.ey = r2(oy + dy * t); ev.ez = r2(oz + dz * t);
         ev.hit = best ? 1 : 0;
         break;
       }
+      case 'bind': p.bindBuffT = BUFF_TIME; break; // next rifle shot roots its target
       case 'firepool': {
         let t = Math.min(rayWorld(ox, oy, oz, dx, dy, dz, POOL_RANGE), POOL_RANGE);
         if (!Number.isFinite(t)) t = POOL_RANGE;
@@ -519,7 +561,7 @@ export class Room {
         x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw), pit: r3(p.pitch),
         hp: Math.ceil(p.hp), mh: p.maxHp, a: p.alive ? 1 : 0, sh: p.shieldT > 0 ? 1 : 0,
         sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0) | (p.crouch ? 16 : 0),
-        bf: (p.fireBuffT > 0 ? 1 : 0) | (p.bleedBuffT > 0 ? 2 : 0) | (p.blastBuffT > 0 ? 4 : 0),
+        bf: (p.fireBuffT > 0 ? 1 : 0) | (p.bleedBuffT > 0 ? 2 : 0) | (p.blastBuffT > 0 ? 4 : 0) | (p.bindBuffT > 0 ? 8 : 0),
         k: p.kills, d: p.deaths,
       })),
       zn: this.zones.map((z) => ({ id: z.id, x: r2(z.x), z: r2(z.z), r: z.r, t: r2(z.t), m: z.max })),
@@ -529,7 +571,7 @@ export class Room {
 
   meFor(p) {
     return {
-      id: p.id, ack: p.lastSeq, cd: p.cd.map((v) => r2(v)),
+      id: p.id, ack: p.lastSeq, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
       st: {
         x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, dvx: p.dvx, dvz: p.dvz, dashT: p.dashT,
         rootT: p.rootT, slowT: p.slowT,
@@ -542,19 +584,34 @@ export class Room {
 // 1 m cells; a cell is blocked when a player standing at its centre would touch a wall.
 const NAV_N = ARENA * 2;
 const NAV_CLEAR = 0.6;
-const navBlocked = new Uint8Array(NAV_N * NAV_N);
-for (let iz = 0; iz < NAV_N; iz++) {
-  for (let ix = 0; ix < NAV_N; ix++) {
-    const cx = -ARENA + ix + 0.5, cz = -ARENA + iz + 0.5;
-    let b = Math.abs(cx) > ARENA - NAV_CLEAR || Math.abs(cz) > ARENA - NAV_CLEAR;
-    if (!b) {
-      for (const w of WALLS) {
-        if (cx > w.minX - NAV_CLEAR && cx < w.maxX + NAV_CLEAR && cz > w.minZ - NAV_CLEAR && cz < w.maxZ + NAV_CLEAR) { b = true; break; }
+const navCache = new Map();
+let navBlocked = new Uint8Array(NAV_N * NAV_N);
+let navMapId = null;
+/** Switch the bots' walkability grid to the given map (cached). Called before each room step. */
+export function useNav(mapId) {
+  if (navMapId === mapId) return;
+  navMapId = mapId;
+  if (!navCache.has(mapId)) {
+    const grid = new Uint8Array(NAV_N * NAV_N);
+    const walls = MAPS[mapId].walls, hazards = MAPS[mapId].hazards || [];
+    for (let iz = 0; iz < NAV_N; iz++) {
+      for (let ix = 0; ix < NAV_N; ix++) {
+        const cx = -ARENA + ix + 0.5, cz = -ARENA + iz + 0.5;
+        let b = Math.abs(cx) > ARENA - NAV_CLEAR || Math.abs(cz) > ARENA - NAV_CLEAR;
+        if (!b) {
+          for (const w of walls) {
+            if (cx > w.minX - NAV_CLEAR && cx < w.maxX + NAV_CLEAR && cz > w.minZ - NAV_CLEAR && cz < w.maxZ + NAV_CLEAR) { b = true; break; }
+          }
+        }
+        if (!b) for (const h of hazards) if (Math.hypot(cx - h.x, cz - h.z) < h.r + NAV_CLEAR) { b = true; break; }
+        grid[iz * NAV_N + ix] = b ? 1 : 0;
       }
     }
-    navBlocked[iz * NAV_N + ix] = b ? 1 : 0;
+    navCache.set(mapId, grid);
   }
+  navBlocked = navCache.get(mapId);
 }
+useNav('olympus');
 const navCellOf = (x, z) => {
   const ix = clamp(Math.floor(x + ARENA), 0, NAV_N - 1), iz = clamp(Math.floor(z + ARENA), 0, NAV_N - 1);
   return iz * NAV_N + ix;
@@ -719,10 +776,10 @@ function botThink(room, p, dt) {
     switch (id) {
       case 'heal': want = p.hp < p.maxHp * 0.5; break;
       case 'shield': want = visible && ai.seenT > 0.1 && room.time - p.lastHurt < 1.0; break;
-      case 'shockwave': want = visible && dist < 5; break;
+      case 'shockwave': want = visible && aimed && dist < 20 && ai.seenT > 0.2; break;
       case 'dash': want = visible && Math.random() < 0.01; break;
       case 'nova': want = visible && dist < 4.5; break;
-      case 'bind': want = visible && aimed && dist < 30 && ai.seenT > 0.3; break;
+      case 'bind': want = visible && p.bindBuffT <= 0 && dist < 30 && ai.seenT > 0.2; break;
       case 'firepool': want = visible && dist < 26 && Math.random() < 0.02; break;
       case 'incendiary': want = visible && ai.seenT > 0.2 && p.fireBuffT <= 0 && dist < 30; break;
       case 'barbed': want = visible && ai.seenT > 0.2 && p.bleedBuffT <= 0 && dist < 30; break;

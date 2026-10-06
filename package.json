@@ -7,6 +7,6 @@
   "engines": { "node": ">=18" },
   "scripts": {
     "start": "node server.js",
-    "test": "node test/headless.mjs && node test/lagcomp.mjs && node test/skills.mjs && node test/map.mjs"
+    "test": "node test/headless.mjs && node test/lagcomp.mjs && node test/skills.mjs && node test/map.mjs && node test/maps.mjs && node test/lobby.mjs && node test/auth.mjs"
   }
 }

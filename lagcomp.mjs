@@ -2,7 +2,7 @@
 // when the client reports that view tick, and must miss when it does not.
 import assert from 'node:assert/strict';
 import { Room } from '../game.js';
-import { EYE_H } from '../shared/sim.js';
+import { EYE_H } from '../sim.js';
 
 const SPEED_PER_TICK = 0.1; // target strafes 6 m/s
 const BEHIND = 12; // ticks of lag (200 ms)
