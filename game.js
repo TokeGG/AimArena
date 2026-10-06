@@ -1,7 +1,8 @@
 // Authoritative game room: players, bots, rounds, hitscan, skills, status effects.
 import {
-  DT, eyeH, FIRE_INTERVAL, BODY_DMG, HEAD_DMG, RANGE, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT,
-  ARENA, WALLS, HAZARDS, DEFAULT_MAP, MAPS, useMap, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint, ffaSpawn, ffaSpawnCount,
+  DT, eyeH, FIRE_INTERVAL, AMMO_START, AMMO_KILL, AMMO_MAX, BODY_DMG, HEAD_DMG, RANGE, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT,
+  LOADOUT_BUDGET, loadoutCost, resolveWalls, PLAYER_R,
+  ARENA, WALLS, HAZARDS, DEFAULT_MAP, MAPS, useMap, sanitizeLook, encodeLook, randomLook, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint, ffaSpawn, ffaSpawnCount,
 } from './sim.js';
 
 export const WIN_ROUNDS = 3;
@@ -24,6 +25,10 @@ const PUSHBACK_RADIUS = 7, PUSHBACK_FORCE = 26;
 const HAZARD_BURN = 1.0;
 const POOL_RANGE = 30, POOL_RADIUS = 3, POOL_TIME = 5;
 const NOVA_RADIUS = 5, NOVA_DMG = 12, NOVA_SLOW = 3;
+const BLINK_DIST = 9, GRAPPLE_RANGE = 28, GRAPPLE_SPEED = 30;
+const SMOKE_RADIUS = 3.6, SMOKE_TIME = 7, SMOKE_RANGE = 24;
+const DECOY_TIME = 6, DECOY_SPEED = 5;
+let nextDecoyId = 1000000;
 
 const SPELL_IDS = Object.keys(SPELLS);
 const MODEL_IDS = Object.keys(MODELS);
@@ -55,14 +60,17 @@ function newAI() {
 }
 
 function randomLoadout() {
-  const out = [];
-  while (out.length < SLOT_COUNT) {
-    const id = pick(SPELL_IDS);
-    if (!out.includes(id)) out.push(id);
+  for (;;) {
+    const out = [];
+    while (out.length < SLOT_COUNT) {
+      const id = pick(SPELL_IDS);
+      if (!out.includes(id)) out.push(id);
+    }
+    if (loadoutCost(out) <= LOADOUT_BUDGET) return out;
   }
-  return out;
 }
 
+/** Everyone has the same stats: the model is only the body style of the player's look. */
 function applyModel(p, key) {
   const m = MODELS[key] || MODELS[DEFAULT_MODEL];
   p.model = MODELS[key] ? key : DEFAULT_MODEL;
@@ -82,15 +90,15 @@ function makePlayer(team, slot, isBot, name) {
     id: nextId++, team, slot, isBot, ws: null, name,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0,
     yaw: 0, pitch: 0, alive: true,
-    model: DEFAULT_MODEL, maxHp: 100, speed: 7, healMult: 1, hp: 100,
-    loadout: randomLoadout(), cd: [0, 0, 0], fireCd: 0, shieldT: 0,
+    model: DEFAULT_MODEL, look: sanitizeLook(null), maxHp: 100, speed: 7, healMult: 1, hp: 100,
+    loadout: randomLoadout(), cd: [0, 0, 0], fireCd: 0, ammo: AMMO_START, shieldT: 0,
     lastSeq: 0, lastQueued: 0, queue: [], lastInput: NEUTRAL(),
     kills: 0, deaths: 0, lastHurt: -99, respawnT: 0, invulnT: 0,
     hist: [], // recent positions {n,x,y,z} for lag compensation
     ai: newAI(), skill: rand(0.55, 0.85),
   };
   clearStatuses(p);
-  if (isBot) applyModel(p, pick(MODEL_IDS));
+  if (isBot) { p.look = randomLook(); applyModel(p, p.look.model); }
   return p;
 }
 
@@ -105,6 +113,7 @@ export class Room {
     this.size = this.ffa ? FFA_PLAYERS : mode;
     this.players = [];
     this.zones = [];
+    this.decoys = [];
     this.phase = 'countdown';
     this.phaseT = 5;
     this.roundT = ROUND_TIME;
@@ -116,6 +125,7 @@ export class Room {
     this.tick = 0;
     this.time = 0;
     this.emptyT = 0;
+    this.specs = new Set(); // spectator sockets (watch only, no player)
     if (this.ffa) {
       // free-for-all: every player is their own team (team === slot), so "enemy" simply means "someone else"
       for (let i = 0; i < this.size; i++) this.players.push(makePlayer(i, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length]));
@@ -147,7 +157,8 @@ export class Room {
         bot.ws = ws;
         bot.name = name;
         bot.loadout = loadout;
-        applyModel(bot, model);
+        bot.look = sanitizeLook({ ...(opts.look || {}), model });
+        applyModel(bot, bot.look.model);
         clearStatuses(bot);
         bot.queue = [];
         bot.lastSeq = 0;
@@ -175,10 +186,9 @@ export class Room {
   /** Apply a champion / skill re-pick (only during the post-match window). */
   setPick(p, model, loadout) {
     if (this.phase !== 'matchEnd' || p.isBot) return false;
-    p.nextModel = MODELS[model] ? model : p.model;
     const out = [];
     if (Array.isArray(loadout)) for (const id of loadout) if (SPELLS[id] && !out.includes(id) && out.length < SLOT_COUNT) out.push(id);
-    if (out.length === SLOT_COUNT) p.nextLoadout = out;
+    if (out.length === SLOT_COUNT && loadoutCost(out) <= LOADOUT_BUDGET) p.nextLoadout = out;
     return true;
   }
 
@@ -222,7 +232,7 @@ export class Room {
       p.dvx = p.dvz = 0; p.dashT = 0;
       p.yaw = sp.yaw; p.pitch = 0;
       p.hp = p.maxHp; p.alive = true;
-      p.cd = [0, 0, 0]; p.fireCd = 0; p.shieldT = 0;
+      p.cd = [0, 0, 0]; p.fireCd = 0; p.ammo = AMMO_START; p.shieldT = 0;
       clearStatuses(p);
       p.queue = [];
       p.hist = [];
@@ -232,6 +242,7 @@ export class Room {
       p.ai.lx = p.x; p.ai.lz = p.z;
     }
     this.zones = [];
+    this.decoys = [];
     this.roundT = this.ffa ? FFA_TIME : ROUND_TIME;
   }
 
@@ -278,7 +289,7 @@ export class Room {
     p.x = c.x; p.y = 0; p.z = c.z;
     p.vx = p.vy = p.vz = 0; p.dvx = p.dvz = 0; p.dashT = 0; p.crouch = false;
     p.yaw = Math.atan2(c.x, c.z); p.pitch = 0;
-    p.hp = p.maxHp; p.alive = true; p.fireCd = 0;
+    p.hp = p.maxHp; p.alive = true; p.fireCd = 0; p.ammo = AMMO_START;
     clearStatuses(p);
     p.invulnT = SPAWN_PROTECT; p.shieldT = SPAWN_PROTECT;
     p.hist = [];
@@ -314,8 +325,7 @@ export class Room {
           for (const p of this.players) {
             p.kills = 0; p.deaths = 0;
             if (p.nextLoadout) { p.loadout = p.nextLoadout; p.nextLoadout = null; }
-            if (p.nextModel) { applyModel(p, p.nextModel); p.nextModel = null; }
-            if (p.isBot) { applyModel(p, pick(MODEL_IDS)); p.loadout = randomLoadout(); }
+            if (p.isBot) { p.look = randomLook(); applyModel(p, p.look.model); p.loadout = randomLoadout(); }
             if (!p.isBot) p.startRating = p.rating; // ratings may have changed at the end of the last match
           }
           this.resetRound();
@@ -383,8 +393,9 @@ export class Room {
           this.endRound(w);
         }
       }
-    } else if (this.zones.length) {
-      this.zones.length = 0;
+    } else {
+      if (this.zones.length) this.zones.length = 0;
+      if (this.decoys.length) this.decoys.length = 0;
     }
 
     // Record positions so shots can be rewound to what the shooter saw.
@@ -404,7 +415,7 @@ export class Room {
     p.pitch = inp.pitch;
     if (this.phase !== 'live' || !p.alive) return;
     // small tolerance: semi-auto clients send one shot per click, so a packet landing a tick early must not be dropped
-    if (inp.shoot && p.fireCd <= FIRE_TOLERANCE) this.shoot(p, inp);
+    if (inp.shoot && p.fireCd <= FIRE_TOLERANCE && p.ammo > 0) this.shoot(p, inp);
     for (let s = 0; s < SLOT_COUNT; s++) {
       if (inp[SLOT_FLAG[s]] && p.cd[s] <= 0) this.cast(p, s, inp);
     }
@@ -414,13 +425,20 @@ export class Room {
   tickZones(dt) {
     for (const z of this.zones) {
       z.t -= dt;
-      if (z.t <= 0) continue;
+      if (z.t <= 0 || z.kind === 'smoke') continue;
       for (const o of this.players) {
         if (!o.alive || o.team === z.team) continue;
         if (o.y < 1.2 && Math.hypot(o.x - z.x, o.z - z.z) < z.r) this.ignite(o, z.src, BURN_LINGER);
       }
     }
     this.zones = this.zones.filter((z) => z.t > 0);
+    for (const d of this.decoys) {
+      d.t -= dt;
+      d.x += -Math.sin(d.yaw) * DECOY_SPEED * dt;
+      d.z += -Math.cos(d.yaw) * DECOY_SPEED * dt;
+      resolveWalls(d);
+    }
+    this.decoys = this.decoys.filter((d) => d.t > 0);
   }
 
   tickStatuses(dt) {
@@ -446,8 +464,8 @@ export class Room {
     victim.burnSrc = src;
   }
 
-  addZone(owner, x, z, r, dur) {
-    this.zones.push({ id: nextZoneId++, x, z, r, t: dur, max: dur, team: owner.team, src: owner });
+  addZone(owner, x, z, r, dur, kind) {
+    this.zones.push({ id: nextZoneId++, x, z, r, t: dur, max: dur, team: owner.team, src: owner, kind });
   }
 
   /** Damage over time: no hit marker, but kills are credited to the source. */
@@ -463,13 +481,17 @@ export class Room {
     victim.alive = false;
     victim.deaths++;
     victim.respawnT = RESPAWN_TIME;
-    if (attacker !== victim) attacker.kills++;
+    if (attacker !== victim) {
+      attacker.kills++;
+      if (attacker.team !== victim.team) attacker.ammo = Math.min(AMMO_MAX, attacker.ammo + AMMO_KILL); // a kill refills your ammo
+    }
     this.events.push({ k: 'kill', a: attacker.id, v: victim.id, head: head ? 1 : 0 });
   }
 
   // -------------------------------------------------------------- combat
   shoot(p, inp) {
     p.fireCd = FIRE_INTERVAL;
+    p.ammo--;
     const bindShot = p.bindBuffT > 0; // Bind: this shot roots whoever it hits (used up even on a miss)
     p.bindBuffT = 0;
     const [dx, dy, dz] = lookDir(inp.yaw, inp.pitch);
@@ -482,7 +504,10 @@ export class Room {
       k: 'shot', id: p.id, ox: r2(ox), oy: r2(oy), oz: r2(oz),
       ex: r2(ox + dx * t), ey: r2(oy + dy * t), ez: r2(oz + dz * t), hit: best ? 1 : 0, bd: bindShot ? 1 : 0,
     });
-    if (best) {
+    if (best && best.decoy) { // the shot is wasted on a decoy; it pops
+      this.decoys = this.decoys.filter((d) => d !== best.who);
+      this.events.push({ k: 'decoypop', x: r2(best.who.x), y: r2(best.who.y), z: r2(best.who.z) });
+    } else if (best) {
       if (bindShot) {
         const v = best.who;
         v.rootT = BIND_TIME;
@@ -501,6 +526,13 @@ export class Room {
       if (o.team === p.team || !o.alive) continue;
       const r = rayPlayer(ox, oy, oz, dx, dy, dz, this.rewound(o, vt), radius);
       if (r && r.t < maxT && (!best || r.t < best.t)) best = { t: r.t, head: r.head, who: o };
+    }
+    if (radius === undefined) { // rifle shots can also hit enemy decoys (Shockwave passes through them)
+      for (const d of this.decoys) {
+        if (d.team === p.team) continue;
+        const r = rayPlayer(ox, oy, oz, dx, dy, dz, d);
+        if (r && r.t < maxT && (!best || r.t < best.t)) best = { t: r.t, head: false, who: d, decoy: true };
+      }
     }
     return best;
   }
@@ -614,6 +646,39 @@ export class Room {
         ev.r = NOVA_RADIUS;
         break;
       case 'barbed': p.bleedBuffT = BUFF_TIME; break;
+      case 'blink': {
+        const hx = -Math.sin(inp.yaw), hz = -Math.cos(inp.yaw);
+        const wall = Math.min(rayWalls(p.x, 0.5, p.z, hx, 0, hz, BLINK_DIST + 1), rayWalls(p.x, 1.3, p.z, hx, 0, hz, BLINK_DIST + 1));
+        const dist = Math.max(0, Math.min(BLINK_DIST, wall - PLAYER_R - 0.15));
+        ev.fx = ev.x; ev.fz = ev.z;
+        p.x += hx * dist; p.z += hz * dist;
+        resolveWalls(p);
+        p.vx *= 0.3; p.vz *= 0.3;
+        ev.x = r2(p.x); ev.z = r2(p.z); ev.tx = ev.x; ev.tz = ev.z;
+        break;
+      }
+      case 'grapple': {
+        const t = rayWalls(ox, oy, oz, dx, dy, dz, GRAPPLE_RANGE);
+        if (!Number.isFinite(t) || t > GRAPPLE_RANGE) { p.cd[slot] = 1; return; } // nothing to hook: no cooldown spent
+        const px = ox + dx * t, py = oy + dy * t, pz = oz + dz * t;
+        const hl = Math.hypot(px - p.x, pz - p.z) || 1;
+        const move = Math.max(0.1, Math.min(0.55, (hl - 1.3) / GRAPPLE_SPEED));
+        p.dvx = ((px - p.x) / hl) * GRAPPLE_SPEED; p.dvz = ((pz - p.z) / hl) * GRAPPLE_SPEED; p.dashT = move;
+        p.vy = clamp((py - p.y) * 2.2, 2.5, 9);
+        ev.ox = r2(ox); ev.oy = r2(oy - 0.25); ev.oz = r2(oz); ev.ex = r2(px); ev.ey = r2(py); ev.ez = r2(pz);
+        break;
+      }
+      case 'smoke': {
+        let t = Math.min(rayWorld(ox, oy, oz, dx, dy, dz, SMOKE_RANGE), SMOKE_RANGE);
+        if (!Number.isFinite(t)) t = SMOKE_RANGE;
+        const px = clamp(ox + dx * t, -ARENA + 1, ARENA - 1), pz = clamp(oz + dz * t, -ARENA + 1, ARENA - 1);
+        this.addZone(p, px, pz, SMOKE_RADIUS, SMOKE_TIME, 'smoke');
+        ev.tx = r2(px); ev.tz = r2(pz); ev.r = SMOKE_RADIUS;
+        break;
+      }
+      case 'decoy':
+        this.decoys.push({ id: nextDecoyId++, x: p.x, y: p.y, z: p.z, yaw: inp.yaw, pitch: 0, t: DECOY_TIME, team: p.team, model: p.model, look: p.look, crouch: false, hist: [] });
+        break;
       default: break;
     }
     this.events.push(ev);
@@ -625,21 +690,22 @@ export class Room {
       t: 's', n: this.tick, ph: this.phase, pt: r2(this.phaseT), rt: Math.round(this.roundT * 10) / 10,
       sc: this.scores, rd: this.round, lw: this.lastWinner, w: this.winner, mode: this.mode, ffa: this.ffa ? 1 : 0, kt: FFA_KILLS,
       p: this.players.map((p) => ({
-        id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model,
+        id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model, lk: encodeLook(p.look),
         x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw), pit: r3(p.pitch),
         hp: Math.ceil(p.hp), mh: p.maxHp, a: p.alive ? 1 : 0, sh: p.shieldT > 0 ? 1 : 0,
         sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0) | (p.crouch ? 16 : 0),
         bf: (p.bleedBuffT > 0 ? 2 : 0) | (p.bindBuffT > 0 ? 8 : 0),
         k: p.kills, d: p.deaths,
       })),
-      zn: this.zones.map((z) => ({ id: z.id, x: r2(z.x), z: r2(z.z), r: z.r, t: r2(z.t), m: z.max })),
+      zn: this.zones.map((z) => ({ id: z.id, x: r2(z.x), z: r2(z.z), r: z.r, t: r2(z.t), m: z.max, k: z.kind === 'smoke' ? 1 : 0 })),
+      dc: this.decoys.map((d) => ({ id: d.id, tm: d.team, md: d.model, lk: encodeLook(d.look), x: r3(d.x), y: r3(d.y), z: r3(d.z), yaw: r3(d.yaw), pit: 0 })),
       ev: this.events,
     };
   }
 
   meFor(p) {
     return {
-      id: p.id, ack: p.lastSeq, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
+      id: p.id, ack: p.lastSeq, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), am: p.ammo, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
       st: {
         x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, dvx: p.dvx, dvz: p.dvz, dashT: p.dashT,
         rootT: p.rootT, slowT: p.slowT,
@@ -854,6 +920,10 @@ function botThink(room, p, dt) {
       case 'bind': want = visible && p.bindBuffT <= 0 && dist < 30 && ai.seenT > 0.2; break;
       case 'firepool': want = visible && dist < 26 && Math.random() < 0.02; break;
       case 'barbed': want = visible && ai.seenT > 0.2 && p.bleedBuffT <= 0 && dist < 30; break;
+      case 'blink': want = visible && dist > 12 && Math.random() < 0.01; break;
+      case 'grapple': want = visible && dist > 16 && Math.random() < 0.008; break;
+      case 'smoke': want = visible && room.time - p.lastHurt < 0.5 && Math.random() < 0.08; break;
+      case 'decoy': want = visible && room.time - p.lastHurt < 1.0 && Math.random() < 0.1; break;
       default: break;
     }
     if (want) inp[SLOT_FLAG[s]] = true;

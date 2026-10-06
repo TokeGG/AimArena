@@ -96,6 +96,17 @@
   #roster .bar i { display:block; height:100%; }
   #roster .dead { opacity:.35; text-decoration:line-through; }
   #roster hr { border:0; border-top:1px solid var(--line); margin:6px 0; }
+  #dmgnums { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+  .dmgnum { position:absolute; transform:translate(-50%,-50%); font-weight:800; font-size:20px; color:#fff; text-shadow:0 2px 4px #000, 0 0 6px #000; }
+  .dmgnum.head { color:#ffd54a; font-size:28px; }
+  #dmgdir { position:absolute; left:50%; top:50%; width:0; height:0; opacity:0; pointer-events:none; transition:opacity .35s; }
+  #dmgdir.on { opacity:1; transition:none; }
+  #dmgdir::after { content:''; position:absolute; left:-70px; top:-170px; width:140px; height:56px; border-top:10px solid rgba(255,60,40,.85); border-radius:50% 50% 0 0 / 100% 100% 0 0; filter:drop-shadow(0 0 6px #f33); }
+  .pts { grid-column:1/-1; font-size:12px; letter-spacing:.08em; color:#cfd6df; margin:2px 0 6px; }
+  .pts.full { color:#e2b84a; } .pts.shake { animation:shake .4s; }
+  @keyframes shake { 25% { transform:translateX(-5px);} 75% { transform:translateX(5px);} }
+  .spellcard.costly { opacity:.4; }
+  .spellcard .cost { font-style:normal; font-size:11px; color:#e2b84a; margin-left:4px; }
   #killfeed { position:absolute; top:12px; right:12px; text-align:right; font-size:14px; }
   #killfeed div { background:var(--panel); padding:4px 10px; border-radius:6px; margin-bottom:4px; }
   #banner { position:absolute; top:24%; left:0; right:0; text-align:center; font-size:64px; font-weight:900; letter-spacing:.08em; font-family:Georgia,serif; color:var(--marble); text-shadow:0 3px 0 #5a4210, 0 2px 24px rgba(0,0,0,.8); }
@@ -112,6 +123,29 @@
   .bindrow .seg { display:flex; gap:4px; flex-wrap:nowrap; }
   .bindrow .seg button { flex:none; width:auto; min-width:0; padding:5px 8px; font-size:12px; }
   #roster .kc { font-size:14px; color:var(--gold); min-width:20px; text-align:right; }
+  .charcard { display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(0,0,0,.3); }
+  .charcard #charsum { flex:1; font-size:13px; line-height:1.45; }
+  .charcard #charsum b { color:var(--gold); }
+  .charcard button { flex:none; }
+  #looklist h4 { margin:14px 0 6px; font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--gold); }
+  .dots { display:inline-flex; gap:4px; vertical-align:middle; margin-left:6px; }
+  .dots i { width:12px; height:12px; border-radius:50%; border:1px solid rgba(255,255,255,.4); }
+  #looklist .seg { display:flex; flex-wrap:wrap; gap:6px; }
+  #looklist .seg button { flex:none; padding:7px 11px; font-size:13px; }
+  #looklist .swatches { display:flex; flex-wrap:wrap; gap:7px; align-items:center; }
+  #looklist .swatches button { flex:0 0 28px; width:28px; height:28px; min-width:0; padding:0; border-radius:50%; border:2px solid rgba(255,255,255,.3); }
+  #looklist .swatches button.on { border-color:#fff; box-shadow:0 0 0 2px var(--gold); }
+  #looklist .swatches input[type=color] { width:34px; height:30px; padding:0; border:0; background:none; cursor:pointer; }
+  #specbar { position:absolute; top:14px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px; background:rgba(0,0,0,.6); border:1px solid var(--line); border-radius:10px; padding:8px 12px; pointer-events:auto; z-index:20; }
+  #specbar span { min-width:140px; text-align:center; font-weight:700; letter-spacing:.04em; }
+  #specbar small { color:#9aa; font-size:11px; }
+  #specbar button { padding:6px 12px; }
+  body.spec #ammo, body.spec #bl, body.spec #spells, body.spec #xh-overlay, body.spec #crosshair, body.spec #xhc { display:none !important; }
+  #gamelist { display:flex; flex-direction:column; gap:8px; min-width:min(460px,80vw); max-height:50vh; overflow:auto; }
+  #gamelist .g { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(0,0,0,.3); }
+  #gamelist .g .tx { flex:1; font-size:13px; line-height:1.4; } #gamelist .g .tx small { color:#9aa; display:block; }
+  #gamelist .empty { color:#9aa; padding:16px; text-align:center; }
+  #side.looking #mainview { display:none; }
   #ffa-note { color:var(--dim); font-size:12px; margin-top:6px; }
   #hitm { position:absolute; left:50%; top:50%; width:28px; height:28px; margin:-14px 0 0 -14px; opacity:0; transition:opacity .15s; }
   #hitm::before, #hitm::after { content:""; position:absolute; left:50%; top:-4px; width:3px; height:36px; margin-left:-1.5px; background:#fff; box-shadow:0 0 4px #000; }
@@ -122,6 +156,12 @@
   #spectate { position:absolute; bottom:24%; left:0; right:0; text-align:center; font-size:20px; letter-spacing:.2em; color:var(--marble); text-shadow:0 2px 8px #000; }
   #status { position:absolute; left:20px; bottom:104px; font-size:13px; font-weight:800; letter-spacing:.06em; display:flex; gap:6px; flex-wrap:wrap; width:280px; }
   #status span { padding:2px 8px; border-radius:6px; background:var(--panel); border:1px solid var(--line); }
+  #ammo { position:absolute; right:24px; bottom:22px; text-align:right; min-width:90px; text-shadow:0 2px 6px #000; }
+  #ammo b { font-size:44px; line-height:1; color:#fff; }
+  #ammo small { display:block; letter-spacing:.2em; color:#9aa; font-size:11px; }
+  #ammo.low b { color:#ff6b5a; }
+  #ammo #firebar { height:3px; background:#e2b84a; width:0; margin-top:4px; margin-left:auto; border-radius:2px; }
+  #ammogain { position:absolute; right:0; top:-26px; font-style:normal; font-weight:800; color:#e2b84a; opacity:0; white-space:nowrap; font-size:16px; }
   #bl { position:absolute; left:20px; bottom:20px; width:250px; }
   #hpval { font-size:46px; font-weight:800; line-height:1; font-family:Georgia,serif; text-shadow:0 2px 8px rgba(0,0,0,.8); }
   #hpbar { height:12px; background:rgba(0,0,0,.55); border-radius:6px; overflow:hidden; margin-top:6px; border:1px solid var(--line); }
@@ -207,10 +247,14 @@
   </div>
   <div id="roster"></div>
   <div id="killfeed"></div>
+  <div id="dmgnums"></div>
+  <div id="dmgdir"></div>
   <div id="banner"></div>
   <div id="crosshair"></div><div id="hitm"></div><div id="flash"></div>
   <div id="spectate" class="hidden">SPECTATING</div>
+  <div id="specbar" class="hidden"><button id="specprev">&#9664;</button><span id="specname">-</span><button id="specnext">&#9654;</button><button id="specleave">LEAVE</button><small>Click or arrow keys to switch player</small></div>
   <div id="status"></div>
+  <div id="ammo"><i id="ammogain"></i><b id="ammon">15</b><small>AMMO</small><div id="firebar"></div></div>
   <div id="bl"><div id="hpval">100</div><div id="hpbar"><div id="hpfill"></div></div></div>
   <div id="spells"></div>
   <div id="ping"></div>
@@ -220,6 +264,7 @@
   <div id="side">
     <h1 id="logo" class="title">AIM <span>ARENA</span></h1>
     <p class="sub">Olympus Arena &middot; 2v2 / 3v3 &middot; bots fill empty slots</p>
+    <div id="mainview">
     <div id="verwarn" class="hidden"></div>
 
     <div id="acct"></div>
@@ -239,10 +284,9 @@
       <button data-team="-1">Auto</button><button data-team="0">Blue</button><button data-team="1">Red</button>
     </div></div>
 
-    <h3>1 &middot; Choose your champion</h3>
-    <div class="hint" style="margin:0 0 8px">More health = slower. Less health = faster. Bars compare all four champions.</div>
-    <div class="models" id="modelpick"></div>
-    <div id="modeldesc"></div>
+    <h3>1 &middot; Your character</h3>
+    <div class="charcard"><div id="charsum"></div><button id="customizebtn">Customize</button></div>
+    <div class="hint">Everyone has the same health and speed. Your look is just for style.</div>
 
     <h3>2 &middot; Pick 3 skills</h3>
     <div class="slots" id="slots"></div>
@@ -256,6 +300,7 @@
     </div>
     <div class="row" style="margin-top:10px"><button id="controlsbtn">&#9000; Keybinds</button><button id="xhbtn">&#10010; Crosshair</button></div>
 
+    <div class="row" style="margin-top:10px"><button id="watchbtn">&#128065; Watch live games</button></div>
     <div id="foot">
       <div class="row">
         <button id="quick" class="playbtn">QUICK PLAY<small>jump straight in</small></button>
@@ -264,6 +309,22 @@
     </div>
     <div class="keys">Default keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Shift</kbd> crouch &nbsp; <kbd>Click</kbd> shoot (one shot per click) &nbsp; <kbd>Q</kbd> <kbd>E</kbd> <kbd>R</kbd> skills &nbsp; <kbd>Esc</kbd> menu. Change them under "Change keybinds".</div>
     <div id="ver"></div>
+    </div>
+    <div id="lookview" class="hidden">
+      <h1 class="title" style="font-size:34px">CUSTOMIZE</h1>
+      <p class="sub">Cosmetic only. Everyone has the same health and speed.</p>
+      <div id="looklist"></div>
+      <div class="row" style="margin-top:14px"><button id="lookrandom">&#127922; Randomize</button><button id="lookreset">Reset</button></div>
+      <button id="lookdone" class="playbtn" style="width:100%;margin-top:10px;font-size:16px">DONE</button>
+    </div>
+  </div>
+</div>
+
+<div id="games" class="modal hidden">
+  <div class="card">
+    <h2>LIVE GAMES</h2>
+    <div id="gamelist"></div>
+    <div class="row" style="margin-top:12px"><button id="gamesrefresh">Refresh</button><button id="gamesclose">Close</button></div>
   </div>
 </div>
 
@@ -310,9 +371,6 @@
 <div id="pickover" class="hidden">
   <div class="wrap">
     <div class="head"><div><h2>NEXT MATCH</h2><div id="ratingline"></div></div><div><div class="hint" style="text-align:right;margin:0">starts in</div><div id="pickcount">15</div></div></div>
-    <h3>Champion</h3>
-    <div class="models" id="pmodelpick"></div>
-    <div id="pmodeldesc" class="hint"></div>
     <h3>Skills</h3>
     <div class="slots" id="pslots"></div>
     <div class="spells" id="pspellpick" style="margin-top:10px"></div>

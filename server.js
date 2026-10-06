@@ -7,7 +7,7 @@ import { Lobby } from './lobby.js';
 import { attachWebSocket } from './ws-lite.js';
 import { createStore } from './store.js';
 import { createAuth, makeLimiter, eloDelta, publicProfile, rankFor } from './auth.js';
-import { DT, SPELLS, MODELS, MAPS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT, VERSION } from './sim.js';
+import { DT, SPELLS, MODELS, sanitizeLook, MAPS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT, LOADOUT_BUDGET, loadoutCost, VERSION } from './sim.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -22,7 +22,7 @@ const MIME = {
 };
 
 // Only these files are ever served (everything lives in one folder, no subfolders).
-const STATIC_FILES = new Set(['index.html', 'main.js', 'world.js', 'sim.js', 'maps.js']);
+const STATIC_FILES = new Set(['index.html', 'main.js', 'world.js', 'sim.js', 'maps.js', 'textures.js', 'character.js']);
 
 function resolveFile(urlPath) {
   let p;
@@ -58,6 +58,13 @@ const bearer = (req) => String(req.headers.authorization || '').replace(/^Bearer
 
 async function handleApi(req, res, route) {
   try {
+    if (route === '/api/games' && req.method === 'GET') {
+      const games = rooms.filter((r) => r.humans().length > 0).map((r) => ({
+        id: r.rid, mode: r.mode, map: r.mapId, mapName: MAPS[r.mapId].name, ranked: !!r.ranked, ph: r.phase, rd: r.round, sc: r.scores,
+        humans: r.humans().map((p) => p.name), size: r.players.length, watching: r.specs.size,
+      })).sort((a, b) => b.humans.length - a.humans.length);
+      return sendJson(res, 200, { ok: true, games });
+    }
     if (route === '/api/status') {
       return sendJson(res, 200, { version: VERSION, persistent: store.kind === 'upstash', storage: store.kind, online: onlineCount() });
     }
@@ -141,7 +148,8 @@ function onForfeit(room, p) { // left a ranked match before it ended: counts as 
 }
 
 // ------------------------------------------------------------------ lobby + sockets
-const lobby = new Lobby((mode, mapId, ranked) => new Room(mode, mapId, { ranked, onMatchEnd, onForfeit }));
+let nextRid = 1;
+const lobby = new Lobby((mode, mapId, ranked) => { const r = new Room(mode, mapId, { ranked, onMatchEnd, onForfeit }); r.rid = nextRid++; return r; });
 const rooms = lobby.rooms;
 const sockets = new Set();
 const onlineCount = () => [...sockets].filter((w) => w.player).length;
@@ -155,7 +163,7 @@ function cleanLoadout(raw) {
   const out = [];
   if (Array.isArray(raw)) for (const id of raw) if (SPELLS[id] && !out.includes(id) && out.length < SLOT_COUNT) out.push(id);
   for (const id of [...DEFAULT_LOADOUT, ...Object.keys(SPELLS)]) if (out.length < SLOT_COUNT && !out.includes(id)) out.push(id);
-  return out;
+  return loadoutCost(out) <= LOADOUT_BUDGET ? out : [...DEFAULT_LOADOUT]; // over the point budget: fall back to the default set
 }
 
 function cleanModel(raw) {
@@ -165,7 +173,7 @@ function cleanModel(raw) {
 const send = (ws, obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); };
 
 async function handleJoin(ws, m) {
-  if (ws.player || ws.ticket) return;
+  if (ws.player || ws.ticket || ws.specRoom) return;
   const ffa = m.mode === 'ffa';
   const mode = ffa ? 'ffa' : m.mode === 3 ? 3 : 2;
   // team modes use team maps, free-for-all uses the big deathmatch map(s)
@@ -182,17 +190,18 @@ async function handleJoin(ws, m) {
 
   const name = user ? user.username : cleanName(m.name);
   const loadout = cleanLoadout(m.loadout);
-  const model = cleanModel(m.model);
+  const look = sanitizeLook({ ...(m.look && typeof m.look === 'object' ? m.look : {}), model: cleanModel(m.look && m.look.model ? m.look.model : m.model) });
+  const model = look.model;
   const rating = user ? user.rating : 1000;
 
   const ticket = {
     mode, map, ranked, team, rating, since: 0,
     place(room) {
-      const p = room.addHuman(ws, name, loadout, model, { team, uid: user ? user.username : null, rating });
+      const p = room.addHuman(ws, name, loadout, model, { team, look, uid: user ? user.username : null, rating });
       if (!p) return false;
       ws.player = p; ws.room = room; ws.ticket = null;
       send(ws, {
-        t: 'welcome', id: p.id, team: p.team, mode, map, ranked, loadout: p.loadout, model: p.model, name,
+        t: 'welcome', id: p.id, team: p.team, mode, map, ranked, loadout: p.loadout, model: p.model, look: p.look, name,
         rating: user ? rating : null, rank: user ? rankFor(rating) : null,
       });
       return true;
@@ -208,6 +217,7 @@ attachWebSocket(server, (ws) => {
   ws.player = null;
   ws.room = null;
   ws.ticket = null;
+  ws.specRoom = null;
   sockets.add(ws);
 
   ws.on('message', (raw) => {
@@ -219,6 +229,12 @@ attachWebSocket(server, (ws) => {
       if (ws.player) ws.room.queueInput(ws.player, m);
     } else if (m.t === 'ping') {
       ws.send(JSON.stringify({ t: 'pong', ts: m.ts }));
+    } else if (m.t === 'spectate') {
+      if (ws.player || ws.ticket || ws.specRoom) return;
+      const room = rooms.find((r) => r.rid === m.room);
+      if (!room || room.specs.size >= 20) { send(ws, { t: 'error', msg: 'That game is no longer available.' }); return; }
+      room.specs.add(ws); ws.specRoom = room;
+      send(ws, { t: 'welcome', spec: true, id: -1, team: 0, mode: room.mode, map: room.mapId, ranked: !!room.ranked, loadout: [], name: 'Spectator' });
     } else if (m.t === 'join') {
       handleJoin(ws, m).catch((e) => console.error('join error', e && e.message));
     } else if (m.t === 'cancel') {
@@ -231,6 +247,7 @@ attachWebSocket(server, (ws) => {
   ws.on('close', () => {
     sockets.delete(ws);
     if (ws.ticket) { lobby.cancel(ws.ticket); ws.ticket = null; }
+    if (ws.specRoom) { ws.specRoom.specs.delete(ws); ws.specRoom = null; }
     if (ws.player) ws.room.removeHuman(ws.player);
     ws.player = null;
   });
@@ -264,10 +281,15 @@ setInterval(() => {
 
 function broadcast(room) {
   const humans = room.humans();
-  if (humans.length) {
+  if (room.specs.size) room.emptyT = 0; // somebody is watching: keep the room alive
+  if (humans.length || room.specs.size) {
     const snap = room.snapshot();
     for (const p of humans) {
       if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify({ ...snap, me: room.meFor(p) }));
+    }
+    if (room.specs.size) {
+      const txt = JSON.stringify(snap);
+      for (const w of room.specs) if (w.readyState === 1) w.send(txt);
     }
   }
   room.events = [];

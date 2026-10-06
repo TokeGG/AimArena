@@ -6,7 +6,7 @@
 
 1. Install Node.js 18 or newer from https://nodejs.org
 2. In this folder: `node server.js` (no `npm install` needed, there are no dependencies)
-3. Open http://localhost:3000, pick a mode, a map, a team, a champion and three skills, then click QUICK PLAY or RANKED (free-for-all has no ranked)
+3. Open http://localhost:3000, pick a mode, a map, a team, your look and three skills, then click QUICK PLAY or RANKED (free-for-all has no ranked)
 
 The browser loads Three.js from a CDN (jsDelivr), so it needs internet access.
 
@@ -24,7 +24,19 @@ The browser loads Three.js from a CDN (jsDelivr), so it needs internet access.
 | Frostpeak | 84 m | West / east | Huge and open, long sight lines for snipers |
 | Labyrinth | 36 m | North / south | A real maze, short sight lines, close fights |
 | Necropolis | 96 m | Free-for-all | Ruined graveyard city with four districts and lava pits |
-- **Between matches**: after a match ends you get 15 seconds to change champion and skills for the next one.
+- **Between matches**: after a match ends you get 15 seconds to change skills for the next one.
+
+## Hit feedback
+
+Damage numbers float off enemies you hit (gold and bigger for headshots, with a two-tone ding), a red arc shows the direction you were hit from, and the kill feed is top right. After you die to a player, a 3 second kill-cam replays the last moments from the killer's eyes.
+
+## Ammo and fire rate
+
+One shot per second. You start every round (and every respawn in free-for-all) with 15 rounds. A kill gives +5, up to 30. There is no reload: at 0 you can't shoot, only use skills, until you get a kill (or the next round). The ammo count is bottom right, with a bar showing the shot cooldown. Tune AMMO_START, AMMO_KILL, AMMO_MAX and FIRE_INTERVAL at the top of `sim.js`.
+
+## Spectating
+
+Menu > Watch live games lists every game with at least one real player (map, mode, score, who is playing, how many are watching). Click WATCH to follow a player in first person. Click, the arrow keys or A/D switch players, right click goes back, LEAVE returns to the menu. Spectators can't affect the game, and up to 20 can watch one room.
 
 ## Accounts
 
@@ -50,26 +62,23 @@ Every action (including Fire and the three skills) can use a keyboard key, any m
 |---|---|
 | W A S D | Move |
 | Space | Jump |
-| C or Shift (hold) | Crouch: half speed, lower view, smaller hitbox, no jumping |
+| C or Shift (hold) | Crouch: 75% speed, lower view, smaller hitbox, no jumping |
 | Mouse | Aim. Left click shoots, one shot per click (semi-auto) |
 | Wheel | Unbound by default; can be bound to any action |
 | Q / E / R | Your three chosen skills |
 | Esc | Pause menu |
 
-## Champions (pick one)
+## Characters and customization
 
-More health always means slower movement. Fewer shots to kill = faster legs.
+Everyone has the same stats: 100 health, speed 7.0, normal heal. Shots to kill: 5 body / 3 head. Nothing about your character changes how you play.
 
-| Champion | Role | Health | Speed | Heal | Dies to (body / head shots) |
-|---|---|---|---|---|---|
-| Vanguard | Tank | 150 | 5.6 | 100% | 7 / 4 |
-| Warden | Support | 115 | 6.4 | 150% | 6 / 3 |
-| Striker | All-rounder | 100 | 7.0 | 100% | 5 / 3 |
-| Phantom | Runner | 70 | 8.6 | 100% | 4 / 2 |
+Menu > Customize changes how you look: body style (Striker, Vanguard, Phantom, Warden), helmet (6), shoulders (4), back piece (5), material (6), plus primary, secondary and glow colours (presets or any colour). Randomize and Reset are there too. Your look is saved in your browser and everyone in the match sees it. Team colour still shows on a glowing band so you can tell sides apart. Fast graphics lowers character detail.
 
-Each champion has its own look in game. Enemy name plates show only while that enemy is visible; allies always show.
+Maps use generated textures (marble, forged metal, ice, brick, crypt stone) with per-theme details such as snow caps, ember strips and moss. Enemy name plates show only while that enemy is visible; allies always show.
 
-## Skills (pick any three, any model)
+## Skills (pick any three, 5 skill points to spend)
+
+Each skill costs 1 or 2 points. The default set (Dash, Heal, Shield) uses all 5.
 
 | Spell | Cooldown | Effect |
 |---|---|---|
@@ -78,6 +87,10 @@ Each champion has its own look in game. Enemy name plates show only while that e
 | Heal | 18s | Restore 35 HP |
 | Shockwave | 10s | Aimed shot: pushes the first enemy hit straight back. No damage |
 | Pushback | 10s | Blast around you: shoves every enemy within 7m away from you. No damage |
+| Blink | 9s | Teleport 9m forward where you look (stops at walls) |
+| Grapple | 8s | Hook the wall you aim at (28m) and pull yourself to it. No cooldown if nothing is hooked |
+| Smoke | 14s | Smoke cloud where you aim, blocks sight for 7s |
+| Decoy | 16s | A fake copy of you runs forward for 6s; an enemy shot at it is wasted |
 | Bind | 11s | Your next rifle shot (6s to use it) roots the enemy it hits for 1.8s |
 | Fire Pool | 14s | Ignite the ground where you aim (3m wide, 5s): burns enemies standing in it |
 | Frost Nova | 12s | 12 damage and 3s slow to enemies within 5m |
@@ -89,9 +102,11 @@ Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots. Lava on Foundr
 
 | File | Role |
 |---|---|
-| `index.html` | Menu (account, mode, map, team, champion, skills, controls) and HUD |
+| `index.html` | Menu (account, mode, map, team, customize, skills, controls) and HUD |
 | `main.js` | Client: rendering, prediction/interpolation, input, keybinds, HUD logic |
-| `world.js` | Themed arena visuals per map, player models, menu podium |
+| `world.js` | Textured arena visuals per map, menu podium |
+| `textures.js` | Generates the wall, floor and lava textures |
+| `character.js` | Builds the customizable 3D character |
 | `maps.js` | Map data: size, spawns, walls, hazards and visual theme for each map |
 | `sim.js` | Movement, raycasts, skills/models list. Used by server and client |
 | `game.js` | Room: rounds / free-for-all, hitscan, spells, bot AI |

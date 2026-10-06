@@ -2,6 +2,9 @@
 // Everything here is decoration; collision comes from the map's walls in maps.js.
 import * as THREE from 'three';
 import { MAPS, DEFAULT_MAP } from './sim.js';
+import { makeSurfaceSet, TILE } from './textures.js';
+import { buildCharacter, lookKey, setCharacterDetail } from './character.js';
+export { lookKey, setCharacterDetail };
 
 export const TEAM_COLOR = [0x3b82ff, 0xff5436];
 const css = (hex) => `#${hex.toString(16).padStart(6, '0')}`;
@@ -15,12 +18,34 @@ const mat = (color, roughness = 0.6, metalness = 0) => new THREE.MeshStandardMat
 // stone / trim materials of the arena currently being built (replaced by applyTheme)
 let MARBLE, MARBLE_DARK, SAND, SAND_DARK, GOLD_MAT;
 let THEME = null;
-function applyTheme(t) {
+let STYLE = 'marble';
+let texList = []; // textures of the current arena (disposed with it, anisotropy set by setQuality)
+const STYLE_BY_MAP = { olympus: 'marble', foundry: 'forge', frostpeak: 'ice', labyrinth: 'brick', necropolis: 'crypt' };
+function tex(canvas, repeat = true, srgb = true) {
+  const t = new THREE.CanvasTexture(canvas);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  if (repeat) { t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping; }
+  texList.push(t);
+  return t;
+}
+function texMat(surf, roughness, metalness, bumpScale = 1.4) {
+  return new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex(surf.color), bumpMap: tex(surf.bump, true, false), bumpScale, roughness, metalness });
+}
+let SURF = null;
+let SNOW, EMBER, MOSS;
+function applyTheme(t, mapId) {
   THEME = t;
-  MARBLE = mat(t.marble, 0.35, 0.1);
-  MARBLE_DARK = mat(t.marbleDark, 0.45, 0.05);
-  SAND = mat(t.sand, 0.85);
-  SAND_DARK = mat(t.sandDark, 0.9);
+  STYLE = STYLE_BY_MAP[mapId] || 'marble';
+  for (const x of texList) x.dispose();
+  texList = [];
+  SURF = makeSurfaceSet(STYLE, t, t.floor, 512);
+  MARBLE = texMat(SURF.wall, 0.4, 0.08);
+  MARBLE_DARK = texMat(SURF.wallDark, 0.5, 0.05);
+  SAND = texMat(SURF.sand, 0.85, 0);
+  SAND_DARK = texMat(SURF.sandDark, 0.9, 0);
+  SNOW = mat(0xeaf3ff, 0.9);
+  EMBER = new THREE.MeshBasicMaterial({ color: t.accent });
+  MOSS = mat(0x3f6a45, 0.95);
   GOLD_MAT = mat(t.gold, 0.35, 0.6);
   GOLD_MAT.emissive = new THREE.Color(mix(t.gold, 0x000000, 0.8));
   flameMats[0].color.setHex(t.torch);
@@ -55,29 +80,12 @@ function skyTexture(t) {
   });
 }
 
-function floorTexture(t, map) {
-  const size = map.size, TILES = Math.round(size / 2); // 4 m slabs
+/** Transparent overlay on the floor: spawn markers, centre emblem and a dark edge. The stone itself is a tiled texture. */
+function decalTexture(t, map) {
+  const size = map.size;
   const S = 1024, k = S / (size * 2);
   return canvasTexture(S, S, (g) => {
-    g.fillStyle = t.floor;
-    g.fillRect(0, 0, S, S);
-    // checker tint + speckle so the floor reads as stone slabs
-    const tile = 4 * k;
-    for (let iz = 0; iz < TILES; iz++) {
-      for (let ix = 0; ix < TILES; ix++) {
-        if ((ix + iz) % 2 === 0) { g.fillStyle = t.floorTint; g.fillRect(ix * tile, iz * tile, tile, tile); }
-      }
-    }
-    for (let i = 0; i < 7000; i++) {
-      g.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,.07)' : 'rgba(200,200,255,.04)';
-      g.fillRect(Math.random() * S, Math.random() * S, 2 + Math.random() * 3, 2 + Math.random() * 3);
-    }
-    g.strokeStyle = t.floorLine;
-    g.lineWidth = 2;
-    for (let i = 0; i <= TILES; i++) {
-      g.beginPath(); g.moveTo(i * tile, 0); g.lineTo(i * tile, S); g.moveTo(0, i * tile); g.lineTo(S, i * tile); g.stroke();
-    }
-    // spawn areas: a tinted disc under every team spawn (blue = team 0, red = team 1), or small marks for FFA spawns
+    g.clearRect(0, 0, S, S);
     const spot = (x, z, r, rgba) => {
       g.fillStyle = rgba;
       g.beginPath(); g.arc((x + size) * k, (z + size) * k, r * k, 0, Math.PI * 2); g.fill();
@@ -86,12 +94,13 @@ function floorTexture(t, map) {
       spot(sp.x, sp.z, 3.2, 'rgba(59,130,255,.34)');
       spot(-sp.x, -sp.z, 3.2, 'rgba(255,84,54,.34)');
     }
-    for (const sp of map.ffaSpawns || []) spot(sp.x, sp.z, 1.6, 'rgba(212,167,58,.22)');
-    // centre emblem: gold rings + sun rays
+    for (const sp of map.ffaSpawns || []) spot(sp.x, sp.z, 1.6, 'rgba(212,167,58,.26)');
+    // centre emblem: accent rings + rays
     g.save();
     g.translate(S / 2, S / 2);
     const ek = Math.min(1, size / 30);
     g.strokeStyle = css(mix(t.accent, 0x000000, 0.2));
+    g.globalAlpha = 0.85;
     g.lineWidth = 7;
     for (const r of [10.5 * ek, 8.2 * ek]) { g.beginPath(); g.arc(0, 0, r * k, 0, Math.PI * 2); g.stroke(); }
     g.lineWidth = 4;
@@ -101,9 +110,9 @@ function floorTexture(t, map) {
     }
     g.restore();
     // darker edge so the arena sits inside its walls
-    const vg = g.createRadialGradient(S / 2, S / 2, S * 0.35, S / 2, S / 2, S * 0.75);
+    const vg = g.createRadialGradient(S / 2, S / 2, S * 0.38, S / 2, S / 2, S * 0.75);
     vg.addColorStop(0, 'rgba(0,0,10,0)');
-    vg.addColorStop(1, 'rgba(0,0,10,.5)');
+    vg.addColorStop(1, 'rgba(0,0,10,.55)');
     g.fillStyle = vg;
     g.fillRect(0, 0, S, S);
   });
@@ -137,10 +146,17 @@ function mergeBoxes(list) {
   let base = 0;
   for (const [w, h, d, x, y, z] of list) {
     const g = new THREE.BoxGeometry(w, h, d);
-    const p = g.attributes.position.array, n = g.attributes.normal.array, t = g.attributes.uv.array, ix = g.index.array;
-    for (let i = 0; i < p.length; i += 3) pos.push(p[i] + x, p[i + 1] + y, p[i + 2] + z);
+    const p = g.attributes.position.array, n = g.attributes.normal.array, ix = g.index.array;
+    // world-space UVs so every surface gets the same texel density (one texture tile = TILE metres)
+    for (let i = 0; i < p.length; i += 3) {
+      const wx = p[i] + x, wy = p[i + 1] + y, wz = p[i + 2] + z;
+      pos.push(wx, wy, wz);
+      const ax = Math.abs(n[i]), ay = Math.abs(n[i + 1]);
+      if (ax > 0.5) uv.push(wz / TILE, wy / TILE);
+      else if (ay > 0.5) uv.push(wx / TILE, wz / TILE);
+      else uv.push(wx / TILE, wy / TILE);
+    }
     for (let i = 0; i < n.length; i++) nor.push(n[i]);
-    for (let i = 0; i < t.length; i++) uv.push(t[i]);
     for (let i = 0; i < ix.length; i++) idx.push(ix[i] + base);
     base += p.length / 3;
     g.dispose();
@@ -221,6 +237,13 @@ function column(parent, w, d, h, x, z, material = MARBLE) {
 }
 
 let teamOfWall = () => 0;
+/** Per-map extras on ordinary walls: snow caps, glowing seams, moss, stone ledges. */
+function styleAccent(scene, w, cx, cz, sx, sz) {
+  if (STYLE === 'ice') box(scene, sx + 0.14, 0.18, sz + 0.14, cx, w.h + 0.09, cz, SNOW);
+  else if (STYLE === 'forge') box(scene, sx + 0.05, 0.08, sz + 0.05, cx, w.h * 0.55, cz, EMBER, false);
+  else if (STYLE === 'crypt') box(scene, sx + 0.07, 0.4, sz + 0.07, cx, 0.2, cz, MOSS);
+  else if (STYLE === 'brick') box(scene, sx + 0.16, 0.14, sz + 0.16, cx, w.h + 0.07, cz, SAND_DARK);
+}
 function buildWallMesh(scene, w) {
   const sx = w.maxX - w.minX, sz = w.maxZ - w.minZ;
   const cx = (w.minX + w.maxX) / 2, cz = (w.minZ + w.maxZ) / 2;
@@ -255,6 +278,7 @@ function buildWallMesh(scene, w) {
   if (w.kind === 'low') {
     box(scene, sx, w.h, sz, cx, w.h / 2, cz, SAND);
     box(scene, sx + 0.12, 0.1, sz + 0.12, cx, w.h + 0.05, cz, GOLD_MAT);
+    styleAccent(scene, w, cx, cz, sx, sz);
     return;
   }
   // cover
@@ -262,6 +286,7 @@ function buildWallMesh(scene, w) {
   box(scene, sx + 0.2, 0.3, sz + 0.2, cx, 0.15, cz, MARBLE_DARK);
   box(scene, sx, w.h - 0.3, sz, cx, 0.3 + (w.h - 0.3) / 2, cz, MARBLE);
   box(scene, sx + 0.2, 0.2, sz + 0.2, cx, w.h + 0.1, cz, GOLD_MAT);
+  styleAccent(scene, w, cx, cz, sx, sz);
 }
 
 // ------------------------------------------------------------------ world
@@ -270,7 +295,7 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
   const T0 = map.theme;
   const ARENA = map.size; // half-extent of THIS map
   const bk = Math.max(1, ARENA / 30); // scale factor for lights, fog and shadows on big maps
-  applyTheme(T0);
+  applyTheme(T0, mapId);
   if (map.spawns) {
     const ax = map.spawns.reduce((a, q) => a + q.x, 0), az = map.spawns.reduce((a, q) => a + q.z, 0);
     teamOfWall = (x, z) => (x * ax + z * az > 0 ? 0 : 1);
@@ -311,10 +336,27 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
   scene.add(sun);
 
   // floor
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: floorTexture(T0, map), roughness: 0.92 }));
+  // floor: tiled stone texture (one tile = TILE metres) plus a transparent decal with spawn markers and the emblem
+  const reps = (ARENA * 2) / TILE;
+  const floorMap = tex(SURF.floor.color), floorBump = tex(SURF.floor.bump, true, false);
+  floorMap.repeat.set(reps, reps); floorBump.repeat.set(reps, reps);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: floorMap, bumpMap: floorBump, bumpScale: 1.2, roughness: 0.88 });
+  if (SURF.floor.emissive) { // glowing cracks (foundry)
+    const em = tex(SURF.floor.emissive);
+    em.repeat.set(reps, reps);
+    floorMat.emissiveMap = em; floorMat.emissive = new THREE.Color(0xffffff); floorMat.emissiveIntensity = 0.9;
+  }
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
+  const decalTex = decalTexture(T0, map);
+  texList.push(decalTex);
+  const decal = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshBasicMaterial({ map: decalTex, transparent: true, depthWrite: false, color: 0xb8b8c8, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  decal.rotation.x = -Math.PI / 2;
+  decal.position.y = 0.012;
+  decal.renderOrder = 1;
+  scene.add(decal);
   // ground outside the arena
   const outer = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: T0.ground, roughness: 1 }));
   outer.rotation.x = -Math.PI / 2;
@@ -369,10 +411,14 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
 
   // hazards (lava pits): glowing animated disc, dark rim stones and flames
   const lava = [];
+  const lavaTex = [];
   const bigHaz = [...(map.hazards || [])].sort((a, b) => b.r - a.r).slice(0, 2); // only the two biggest pits get a real light
   for (const h of map.hazards || []) {
     h.lit = bigHaz.includes(h);
-    const lm = new THREE.MeshBasicMaterial({ color: 0xff4a10 });
+    const lt = tex(SURF.lava.color);
+    lt.repeat.set(Math.max(1, h.r / 2.2), Math.max(1, h.r / 2.2));
+    lavaTex.push(lt);
+    const lm = new THREE.MeshBasicMaterial({ color: 0xffffff, map: lt });
     const disc = new THREE.Mesh(new THREE.CircleGeometry(h.r, 48), lm);
     disc.rotation.x = -Math.PI / 2; disc.position.set(h.x, 0.04, h.z);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(h.r + 0.15, 0.22, 8, 48), SAND_DARK);
@@ -425,7 +471,8 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
       const s = 0.75 + 0.45 * Math.sin(now / 85 + f.userData.phase);
       f.scale.set(1, s, 1);
     }
-    for (const lm of lava) lm.color.setRGB(1, 0.2 + 0.12 * Math.sin(now / 260), 0.04);
+    for (const lm of lava) lm.color.setRGB(0.9 + 0.1 * Math.sin(now / 260), 0.8 + 0.2 * Math.sin(now / 410 + 1), 0.8);
+    for (let i = 0; i < lavaTex.length; i++) { lavaTex[i].offset.x = (now / 14000) * (i % 2 ? -1 : 1); lavaTex[i].offset.y = now / 20000; }
     for (const c of clouds) {
       c.position.x += c.userData.speed * 0.016;
       if (c.position.x > 200) c.position.x = -200;
@@ -441,6 +488,8 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
     sun.castShadow = high;
     for (const l of torchLights) l.visible = high;
     sun.shadow.mapSize.set(1024, 1024);
+    const aniso = high ? Math.min(8, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1) : 1;
+    for (const t of texList) { t.anisotropy = aniso; t.needsUpdate = true; }
     for (const c of clouds) c.visible = high;
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
     scene.traverse((o) => {
@@ -450,7 +499,7 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
   }
 
   /** Remove this arena from the scene (used when the next match is on another map). */
-  function dispose() { parent.remove(scene); flames.length = 0; torchLights.length = 0; }
+  function dispose() { parent.remove(scene); flames.length = 0; torchLights.length = 0; for (const t of texList) t.dispose(); texList = []; }
 
   return { update, setQuality, sun, dispose, map };
 }
@@ -480,80 +529,7 @@ export function buildShowroom(parent) {
 }
 
 // ------------------------------------------------------------------ player models
-// One humanoid per class. Faces -z, gun hand on +x. All of them fit inside the shared hitbox
-// (radius 0.5, height 1.8), so the silhouette never changes who can hit whom.
-const STEEL = mat(0x9aa2b8, 0.35, 0.7);
-const DARKM = mat(0x1f1c2b, 0.6, 0.2);
-const SKIN = mat(0xd9b79a, 0.7);
-const WHITE = mat(0xe9e5f2, 0.55);
-const GLOW_CYAN = new THREE.MeshBasicMaterial({ color: 0x7ff3ff });
-const GLOW_ORANGE = new THREE.MeshBasicMaterial({ color: 0xff8a3a });
-const GLOW_GREEN = new THREE.MeshBasicMaterial({ color: 0x8dffb4 });
-const GEO = new Map();
-const geo = (key, make) => { if (!GEO.has(key)) GEO.set(key, make()); return GEO.get(key); };
-const bx = (w, h, d) => geo(`b${w},${h},${d}`, () => new THREE.BoxGeometry(w, h, d));
-const sp = (r) => geo(`s${r}`, () => new THREE.SphereGeometry(r, 14, 10));
-
-function part(group, g, material, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
-  const m = new THREE.Mesh(g, material);
-  m.position.set(x, y, z);
-  m.rotation.x = rx; m.rotation.y = ry; m.rotation.z = rz;
-  if (sx !== 1 || sy !== 1 || sz !== 1) m.scale.set(sx, sy, sz);
-  m.castShadow = true;
-  group.add(m);
-  return m;
-}
-
-export function buildModel(model, teamColor) {
-  const team = new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.5, metalness: 0.15, emissive: teamColor, emissiveIntensity: 0.3 });
-  const g = new THREE.Group();
-  if (model === 'vanguard') {
-    for (const s of [-1, 1]) part(g, bx(0.28, 0.8, 0.3), STEEL, s * 0.18, 0.4, 0);
-    part(g, bx(0.86, 0.66, 0.52), team, 0, 1.1, 0);
-    part(g, bx(0.7, 0.4, 0.08), STEEL, 0, 1.15, -0.3);
-    part(g, bx(0.14, 0.14, 0.03), GOLD_MAT, 0, 1.17, -0.35);
-    for (const s of [-1, 1]) {
-      part(g, sp(0.27), STEEL, s * 0.55, 1.38, 0, 0, 0, 0, 1, 0.8, 1.1);
-      part(g, bx(0.22, 0.55, 0.22), team, s * 0.56, 0.98, 0);
-    }
-    part(g, bx(0.1, 0.8, 0.5), STEEL, -0.7, 1.0, -0.12);
-    part(g, bx(0.12, 0.1, 0.52), GOLD_MAT, -0.7, 1.42, -0.12);
-    part(g, bx(0.34, 0.34, 0.36), STEEL, 0, 1.54, 0);
-    part(g, bx(0.28, 0.06, 0.04), GLOW_ORANGE, 0, 1.55, -0.19);
-    part(g, bx(0.06, 0.16, 0.34), GOLD_MAT, 0, 1.73, 0);
-  } else if (model === 'phantom') {
-    for (const s of [-1, 1]) part(g, bx(0.15, 0.8, 0.18), DARKM, s * 0.1, 0.4, 0);
-    part(g, bx(0.38, 0.56, 0.22), DARKM, 0, 1.08, 0);
-    part(g, bx(0.42, 0.09, 0.25), team, 0, 0.9, 0, 0, 0, 0.35);
-    for (const s of [-1, 1]) part(g, bx(0.1, 0.5, 0.1), DARKM, s * 0.26, 1.06, -0.04);
-    part(g, sp(0.15), DARKM, 0, 1.52, 0);
-    part(g, geo('cone', () => new THREE.ConeGeometry(0.2, 0.42, 10)), DARKM, 0, 1.6, 0.03);
-    for (const s of [-1, 1]) part(g, bx(0.07, 0.03, 0.02), GLOW_CYAN, s * 0.06, 1.53, -0.15);
-    part(g, bx(0.5, 0.9, 0.04), team, 0, 1.0, 0.17, 0.12);
-    part(g, bx(0.14, 0.05, 0.6), team, 0, 1.4, 0.4, 0.3);
-  } else if (model === 'warden') {
-    part(g, geo('robe', () => new THREE.CylinderGeometry(0.26, 0.5, 1.0, 16)), team, 0, 0.5, 0);
-    part(g, geo('trim', () => new THREE.TorusGeometry(0.49, 0.03, 8, 28)), GOLD_MAT, 0, 0.06, 0, Math.PI / 2);
-    part(g, geo('top', () => new THREE.CylinderGeometry(0.27, 0.27, 0.4, 14)), WHITE, 0, 1.2, 0);
-    part(g, geo('mantle', () => new THREE.CylinderGeometry(0.3, 0.4, 0.14, 14)), GOLD_MAT, 0, 1.4, 0);
-    for (const s of [-1, 1]) part(g, bx(0.12, 0.45, 0.12), WHITE, s * 0.34, 1.08, -0.03);
-    part(g, sp(0.17), SKIN, 0, 1.56, 0);
-    part(g, geo('halo', () => new THREE.TorusGeometry(0.24, 0.025, 8, 28)), GLOW_GREEN, 0, 1.84, 0, Math.PI / 2);
-    part(g, geo('staff', () => new THREE.CylinderGeometry(0.025, 0.025, 1.7, 8)), GOLD_MAT, -0.44, 0.85, -0.15);
-    part(g, sp(0.1), GLOW_GREEN, -0.44, 1.76, -0.15);
-  } else { // striker
-    for (const s of [-1, 1]) {
-      part(g, bx(0.2, 0.8, 0.24), DARKM, s * 0.13, 0.4, 0);
-      part(g, bx(0.22, 0.12, 0.32), STEEL, s * 0.13, 0.06, -0.04);
-    }
-    part(g, bx(0.54, 0.58, 0.32), team, 0, 1.09, 0);
-    part(g, bx(0.56, 0.1, 0.34), DARKM, 0, 0.79, 0);
-    part(g, bx(0.4, 0.3, 0.05), STEEL, 0, 1.15, -0.18);
-    for (const s of [-1, 1]) part(g, bx(0.14, 0.5, 0.14), team, s * 0.36, 1.06, -0.05);
-    part(g, sp(0.18), SKIN, 0, 1.55, 0);
-    part(g, geo('helm', () => new THREE.SphereGeometry(0.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2)), DARKM, 0, 1.56, 0);
-    part(g, bx(0.3, 0.07, 0.05), GLOW_CYAN, 0, 1.55, -0.18);
-    part(g, bx(0.34, 0.4, 0.16), DARKM, 0, 1.1, 0.24);
-  }
-  return g;
+// Characters are built in character.js (detailed, customizable, same hitbox for everyone).
+export function buildModel(look, teamColor) {
+  return buildCharacter(look, teamColor);
 }
