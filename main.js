@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import {
-  DT, EYE_H, eyeH, FIRE_INTERVAL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL,
-  MOVE_SPEED, VERSION, MAPS, MAP_IDS, DEFAULT_MAP, useMap, stepPlayer, lookDir, rayWorld, spawnPoint,
+  DT, EYE_H, eyeH, FIRE_INTERVAL, SPELLS, MODELS, SLOT_KEYS, SLOT_COUNT, DEFAULT_LOADOUT, DEFAULT_MODEL, BODY_DMG, HEAD_DMG,
+  MOVE_SPEED, VERSION, MAPS, MAP_IDS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, useMap, stepPlayer, lookDir, rayWorld, spawnPoint,
 } from '/sim.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, buildModel, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.5.0';
+const CLIENT_VERSION = '0.6.0';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -25,15 +25,25 @@ const cfg = {
   loadout: store.get('loadout3', DEFAULT_LOADOUT),
   model: store.get('model', DEFAULT_MODEL),
   quality: store.get('quality', 'high'),
-  map: store.get('map', DEFAULT_MAP),
+  map: store.get('map', DEFAULT_MAP),     // last team map
+  ffaMap: store.get('ffaMap', FFA_MAP_IDS[0]), // last free-for-all map
   team: store.get('team', -1),
 };
 if (!Array.isArray(cfg.loadout) || cfg.loadout.length > SLOT_COUNT || !cfg.loadout.every((s) => SPELLS[s])) cfg.loadout = [...DEFAULT_LOADOUT];
 if (!MODELS[cfg.model]) cfg.model = DEFAULT_MODEL;
 if (cfg.quality !== 'low') cfg.quality = 'high';
-if (!MAPS[cfg.map]) cfg.map = DEFAULT_MAP;
+if (!TEAM_MAP_IDS.includes(cfg.map)) cfg.map = DEFAULT_MAP;
+if (!FFA_MAP_IDS.includes(cfg.ffaMap)) cfg.ffaMap = FFA_MAP_IDS[0];
+if (![2, 3, 'ffa'].includes(cfg.mode)) cfg.mode = 2;
+const isFfaMode = () => cfg.mode === 'ffa';
+const chosenMap = () => (isFfaMode() ? cfg.ffaMap : cfg.map);
 if (![-1, 0, 1].includes(cfg.team)) cfg.team = -1;
 const TEAM_COLOR_CSS = ['#3b82ff', '#ff5436'];
+// Free-for-all: everyone else is an enemy; give each player their own colour so they can be told apart.
+const FFA_COLORS = [0xff5436, 0xffb020, 0xb36bff, 0x35d0a0, 0xff6fb5, 0x9be04a, 0x4fd8e8, 0xe8e8e8];
+let inFfa = false;
+const colorOf = (tm) => (inFfa ? FFA_COLORS[tm % FFA_COLORS.length] : TEAM_COLOR[tm]);
+const cssOf = (tm) => (inFfa ? hex(FFA_COLORS[tm % FFA_COLORS.length]) : TEAM_COLOR_CSS[tm]);
 
 // ------------------------------------------------------------------ audio
 let actx = null;
@@ -56,27 +66,34 @@ function beep(freq = 440, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
 }
 
 // ------------------------------------------------------------------ keybinds
+// A bind is a keyboard code ('KeyW') or a mouse code: 'Mouse0' left, 'Mouse1' middle, 'Mouse2' right,
+// 'Mouse3' / 'Mouse4' side buttons, 'WheelUp' / 'WheelDown'.
 const DEFAULT_BINDS = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space',
-  crouch: 'KeyC', crouch2: 'ShiftLeft', skill1: 'KeyQ', skill2: 'KeyE', skill3: 'KeyR',
+  crouch: 'KeyC', crouch2: 'ShiftLeft', shoot: 'Mouse0', skill1: 'KeyQ', skill2: 'KeyE', skill3: 'KeyR',
 };
 const BIND_LABELS = {
   forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right', jump: 'Jump',
-  crouch: 'Crouch', crouch2: 'Crouch (second key)', skill1: 'Skill 1', skill2: 'Skill 2', skill3: 'Skill 3',
+  crouch: 'Crouch', crouch2: 'Crouch (second key)', shoot: 'Fire', skill1: 'Skill 1', skill2: 'Skill 2', skill3: 'Skill 3',
 };
 const binds = { ...DEFAULT_BINDS };
 {
   const saved = store.get('binds', {});
   for (const k of Object.keys(DEFAULT_BINDS)) if (saved && typeof saved[k] === 'string' && saved[k].length < 24) binds[k] = saved[k];
 }
-function keyName(code) {
+const MOUSE_NAMES = { Mouse0: 'Left Click', Mouse1: 'Middle Click', Mouse2: 'Right Click', Mouse3: 'Mouse 4', Mouse4: 'Mouse 5', WheelUp: 'Wheel Up', WheelDown: 'Wheel Down' };
+const MOUSE_SHORT = { Mouse0: 'LMB', Mouse1: 'MMB', Mouse2: 'RMB', Mouse3: 'M4', Mouse4: 'M5', WheelUp: 'Wh↑', WheelDown: 'Wh↓' };
+function keyName(code, short = false) {
   if (!code) return '-';
+  if (short && MOUSE_SHORT[code]) return MOUSE_SHORT[code];
+  if (MOUSE_NAMES[code]) return MOUSE_NAMES[code];
+  if (code.startsWith('Mouse')) return `Mouse ${Number(code.slice(5)) + 1}`;
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
   const map = { Space: 'Space', ShiftLeft: 'L-Shift', ShiftRight: 'R-Shift', ControlLeft: 'L-Ctrl', ControlRight: 'R-Ctrl', AltLeft: 'L-Alt', AltRight: 'R-Alt', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Tab: 'Tab', CapsLock: 'Caps' };
   return map[code] || code;
 }
-const slotLabel = (i) => keyName(binds[`skill${i + 1}`]);
+const slotLabel = (i) => keyName(binds[`skill${i + 1}`], true);
 let listening = null; // action currently being rebound
 function renderBinds() {
   const box = $('bindlist');
@@ -88,8 +105,8 @@ function renderBinds() {
     label.textContent = BIND_LABELS[act];
     const btn = document.createElement('button');
     btn.className = listening === act ? 'listening' : '';
-    btn.textContent = listening === act ? 'press a key...' : keyName(binds[act]);
-    btn.onclick = () => { listening = act; renderBinds(); };
+    btn.textContent = listening === act ? 'press a key or mouse button...' : keyName(binds[act]);
+    btn.onclick = (e) => { if (listening) return; listening = act; renderBinds(); e.stopPropagation(); };
     row.append(label, btn);
     box.appendChild(row);
   }
@@ -99,20 +116,126 @@ function setBind(act, code) {
   binds[act] = code;
   store.set('binds', binds);
 }
-window.addEventListener('keydown', (e) => {
-  if (!listening) return;
-  e.preventDefault(); e.stopPropagation();
-  if (e.code !== 'Escape') setBind(listening, e.code);
+function finishBind(code) {
+  if (code) setBind(listening, code);
   listening = null;
   renderBinds();
   if (typeof buildSpellHud === 'function' && playing) buildSpellHud();
   renderMenu();
+}
+window.addEventListener('keydown', (e) => {
+  if (!listening) return;
+  e.preventDefault(); e.stopPropagation();
+  finishBind(e.code === 'Escape' ? null : e.code);
 }, true);
+// While a bind is waiting, any mouse button or the wheel can be used (the click that started it has already finished).
+window.addEventListener('mousedown', (e) => {
+  if (!listening) return;
+  e.preventDefault(); e.stopPropagation();
+  finishBind(`Mouse${e.button}`);
+}, true);
+window.addEventListener('wheel', (e) => {
+  if (!listening || !e.deltaY) return;
+  e.preventDefault(); e.stopPropagation();
+  finishBind(e.deltaY < 0 ? 'WheelUp' : 'WheelDown');
+}, { capture: true, passive: false });
 const openBinds = () => { listening = null; renderBinds(); $('binds').classList.remove('hidden'); };
 $('controlsbtn').onclick = openBinds;
 $('controlsbtn2').onclick = openBinds;
 $('bindclose').onclick = () => { listening = null; $('binds').classList.add('hidden'); };
-$('bindreset').onclick = () => { Object.assign(binds, DEFAULT_BINDS); store.set('binds', binds); renderBinds(); renderMenu(); };
+$('bindreset').onclick = () => { Object.assign(binds, DEFAULT_BINDS); store.set('binds', binds); renderBinds(); renderMenu(); if (playing) buildSpellHud(); };
+
+// ------------------------------------------------------------------ crosshair
+const DEFAULT_XH = { shape: 'cross', color: '#ffffff', length: 7, thick: 2, gap: 4, opacity: 1, outline: true, dot: true };
+const XH_COLORS = ['#ffffff', '#4ade80', '#22d3ee', '#facc15', '#ff4d4d', '#ff6fb5', '#b36bff'];
+const xh = { ...DEFAULT_XH };
+{
+  const saved = store.get('xhair', {});
+  if (saved && typeof saved === 'object') {
+    if (['cross', 'tcross', 'dot', 'circle'].includes(saved.shape)) xh.shape = saved.shape;
+    if (typeof saved.color === 'string' && /^#[0-9a-f]{6}$/i.test(saved.color)) xh.color = saved.color;
+    for (const [k, lo, hi] of [['length', 1, 20], ['thick', 1, 6], ['gap', 0, 14], ['opacity', 0.2, 1]]) if (Number.isFinite(saved[k])) xh[k] = clamp(saved[k], lo, hi);
+    if (typeof saved.outline === 'boolean') xh.outline = saved.outline;
+    if (typeof saved.dot === 'boolean') xh.dot = saved.dot;
+  }
+}
+/** The crosshair as SVG (64 x 64 view box, centre at 32,32). */
+function crosshairSvg(c) {
+  const m = 32, L = c.length, g = c.gap, t = c.thick;
+  const parts = [];
+  const line = (x1, y1, x2, y2, w, col) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="${w}" stroke-linecap="butt"/>`;
+  const draw = (col, extra) => {
+    if (c.shape === 'cross' || c.shape === 'tcross') {
+      if (c.shape === 'cross') parts.push(line(m, m - g - L, m, m - g, t + extra, col));
+      parts.push(line(m, m + g, m, m + g + L, t + extra, col));
+      parts.push(line(m - g - L, m, m - g, m, t + extra, col));
+      parts.push(line(m + g, m, m + g + L, m, t + extra, col));
+      if (c.dot) parts.push(`<circle cx="${m}" cy="${m}" r="${t / 2 + 0.4 + extra / 2}" fill="${col}"/>`);
+    } else if (c.shape === 'dot') {
+      parts.push(`<circle cx="${m}" cy="${m}" r="${Math.max(1, L / 3) + extra / 2}" fill="${col}"/>`);
+    } else {
+      parts.push(`<circle cx="${m}" cy="${m}" r="${g + L / 2 + 2}" fill="none" stroke="${col}" stroke-width="${t + extra}"/>`);
+      if (c.dot) parts.push(`<circle cx="${m}" cy="${m}" r="${t / 2 + 0.4 + extra / 2}" fill="${col}"/>`);
+    }
+  };
+  if (c.outline) draw('#000', 2);
+  draw(c.color, 0);
+  return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" opacity="${c.opacity}">${parts.join('')}</svg>`;
+}
+function applyCrosshair() {
+  $('crosshair').innerHTML = crosshairSvg(xh);
+  if (!$('xh').classList.contains('hidden')) $('xhprev').innerHTML = crosshairSvg(xh);
+}
+function renderXhList() {
+  const box = $('xhlist');
+  box.innerHTML = '';
+  const row = (label, control) => {
+    const r = document.createElement('div');
+    r.className = 'bindrow';
+    const l = document.createElement('span');
+    l.textContent = label;
+    r.append(l, control);
+    box.appendChild(r);
+  };
+  const seg = (opts, cur, set) => {
+    const d = document.createElement('div'); d.className = 'seg';
+    for (const [v, text] of opts) {
+      const b = document.createElement('button'); b.textContent = text; b.className = cur === v ? 'on' : '';
+      b.onclick = () => { set(v); store.set('xhair', xh); applyCrosshair(); renderXhList(); };
+      d.appendChild(b);
+    }
+    return d;
+  };
+  const slider = (key, min, max, step) => {
+    const i = document.createElement('input');
+    i.type = 'range'; i.min = min; i.max = max; i.step = step; i.value = xh[key];
+    i.oninput = () => { xh[key] = Number(i.value); store.set('xhair', xh); applyCrosshair(); };
+    return i;
+  };
+  row('Shape', seg([['cross', 'Cross'], ['tcross', 'T'], ['dot', 'Dot'], ['circle', 'Ring']], xh.shape, (v) => { xh.shape = v; }));
+  const sw = document.createElement('div'); sw.className = 'swatches';
+  for (const c of XH_COLORS) {
+    const b = document.createElement('button'); b.style.background = c; b.className = xh.color.toLowerCase() === c ? 'on' : '';
+    b.onclick = () => { xh.color = c; store.set('xhair', xh); applyCrosshair(); renderXhList(); };
+    sw.appendChild(b);
+  }
+  const pick = document.createElement('input'); pick.type = 'color'; pick.value = xh.color; pick.title = 'Custom colour';
+  pick.oninput = () => { xh.color = pick.value; store.set('xhair', xh); applyCrosshair(); };
+  sw.appendChild(pick);
+  row('Colour', sw);
+  row('Size', slider('length', 1, 20, 1));
+  row('Thickness', slider('thick', 1, 6, 1));
+  row('Gap', slider('gap', 0, 14, 1));
+  row('Opacity', slider('opacity', 0.2, 1, 0.05));
+  row('Outline', seg([[true, 'On'], [false, 'Off']], xh.outline, (v) => { xh.outline = v; }));
+  row('Centre dot', seg([[true, 'On'], [false, 'Off']], xh.dot, (v) => { xh.dot = v; }));
+}
+const openXh = () => { renderXhList(); $('xh').classList.remove('hidden'); applyCrosshair(); };
+$('xhbtn').onclick = openXh;
+$('xhbtn2').onclick = openXh;
+$('xhclose').onclick = () => $('xh').classList.add('hidden');
+$('xhreset').onclick = () => { Object.assign(xh, DEFAULT_XH); store.set('xhair', xh); renderXhList(); applyCrosshair(); };
+applyCrosshair();
 
 // ------------------------------------------------------------------ account
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -132,7 +255,10 @@ function renderAcct() {
     $('loginbtn').onclick = () => openAuth('login');
   }
   $('nameblock').classList.toggle('hidden', !!account);
-  $('rankedsub').textContent = account ? `${account.rating} · ${account.rank}` : 'sign in to play';
+  setRankedSub();
+}
+function setRankedSub() {
+  $('rankedsub').textContent = isFfaMode() ? 'team modes only' : account ? `${account.rating} · ${account.rank}` : 'sign in to play';
 }
 async function loadAccount() {
   try {
@@ -180,10 +306,19 @@ $('authuser').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('aut
 // ------------------------------------------------------------------ menu
 const ICON = {
   dash: '\u{1F4A8}', shield: '\u{1F6E1}️', heal: '\u{1F49A}', shockwave: '\u{1F4A5}', bind: '⛓️',
-  firepool: '\u{1F30B}', nova: '❄️', incendiary: '\u{1F525}', barbed: '\u{1FA78}', explosive: '\u{1F4A3}',
+  firepool: '\u{1F30B}', nova: '❄️', pushback: '\u{1F32A}️', barbed: '\u{1FA78}',
 };
 const MODEL_SWATCH = { striker: '#d9d4c7', vanguard: '#9b7be8', phantom: '#4fd8e8', warden: '#7be08a' };
-const statBar = (label, v, max) => `<div class="stat">${label}<i><u style="width:${Math.round((v / max) * 100)}%"></u></i></div>`;
+const statBar = (label, v, max, text) => `<div class="stat"><span>${label}</span><i><u style="width:${Math.round(clamp(v / max, 0, 1) * 100)}%"></u></i><em>${text}</em></div>`;
+const MAX_HP = Math.max(...Object.values(MODELS).map((m) => m.hp));
+const MAX_SPEED = Math.max(...Object.values(MODELS).map((m) => m.speed));
+const MAX_HEAL = Math.max(...Object.values(MODELS).map((m) => m.healMult));
+const shotsToKill = (m) => ({ body: Math.ceil(m.hp / BODY_DMG), head: Math.ceil(m.hp / HEAD_DMG) });
+function modelSummary(id) {
+  const m = MODELS[id], k = shotsToKill(m);
+  const heal = m.healMult > 1 ? ` Heal restores ${Math.round((m.healMult - 1) * 100)}% more.` : '';
+  return `<b>${m.name} &middot; ${m.role}</b> &mdash; ${m.hp} health, speed ${m.speed}. Dies to ${k.body} body shots or ${k.head} headshots.${heal} ${m.blurb}`;
+}
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
 /** Champion + 3 skills picker, used by the main menu and by the 15 second window after a match. */
@@ -193,12 +328,12 @@ function renderPicker(ids, st, onChange) {
   for (const [id, m] of Object.entries(MODELS)) {
     const b = document.createElement('button');
     b.className = 'modelcard' + (st.model === id ? ' on' : '');
-    b.innerHTML = `<div class="sw" style="background:${MODEL_SWATCH[id]}"></div><b>${m.name}</b>` +
-      statBar('HP', m.hp, 130) + statBar('SPD', m.speed, 8) + statBar('HEAL', m.healMult, 1.5);
+    b.innerHTML = `<div class="sw" style="background:${MODEL_SWATCH[id]}"></div><b>${m.name}</b><span class="role">${m.role}</span>` +
+      statBar('Health', m.hp, MAX_HP, m.hp) + statBar('Speed', m.speed, MAX_SPEED, m.speed.toFixed(1)) + statBar('Heal', m.healMult, MAX_HEAL, `${Math.round(m.healMult * 100)}%`);
     b.onclick = () => { st.model = id; onChange('model'); };
     mbox.appendChild(b);
   }
-  $(ids.desc).textContent = MODELS[st.model].desc;
+  $(ids.desc).innerHTML = modelSummary(st.model);
 
   const slots = $(ids.slots);
   slots.innerHTML = '';
@@ -236,6 +371,9 @@ function renderMenu() {
   $('name').value = cfg.name;
   $('m2').classList.toggle('on', cfg.mode === 2);
   $('m3').classList.toggle('on', cfg.mode === 3);
+  $('mffa').classList.toggle('on', isFfaMode());
+  $('ffa-note').classList.toggle('hidden', !isFfaMode());
+  $('teamblock').classList.toggle('hidden', isFfaMode());
   $('qh').classList.toggle('on', cfg.quality === 'high');
   $('ql').classList.toggle('on', cfg.quality === 'low');
   $('sens').value = cfg.sens;
@@ -244,12 +382,12 @@ function renderMenu() {
 
   const mp = $('mappick');
   mp.innerHTML = '';
-  for (const id of MAP_IDS) {
+  for (const id of isFfaMode() ? FFA_MAP_IDS : TEAM_MAP_IDS) {
     const m = MAPS[id], t = m.theme;
     const b = document.createElement('button');
-    b.className = 'mapcard' + (cfg.map === id ? ' on' : '');
-    b.innerHTML = `<div class="sw" style="background:linear-gradient(110deg, ${hex(t.haze)}, ${t.floor} 55%, ${hex(t.accent)})"></div><div class="tx"><b>${esc(m.name)}</b><small>${esc(m.tagline)}</small></div>`;
-    b.onclick = () => { cfg.map = id; renderMenu(); };
+    b.className = 'mapcard' + (chosenMap() === id ? ' on' : '');
+    b.innerHTML = `<div class="sw" style="background:linear-gradient(110deg, ${hex(t.haze)}, ${t.floor} 55%, ${hex(t.accent)})"></div><div class="tx"><b>${esc(m.name)}</b><small>${esc(m.tagline)} &middot; ${m.size * 2}m wide</small></div>`;
+    b.onclick = () => { if (isFfaMode()) cfg.ffaMap = id; else cfg.map = id; renderMenu(); };
     mp.appendChild(b);
   }
 
@@ -258,11 +396,14 @@ function renderMenu() {
     if (what === 'model') setPreview(cfg.model);
   });
   const ready = cfg.loadout.length === SLOT_COUNT;
-  for (const id of ['quick', 'ranked']) $(id).disabled = !ready;
+  $('quick').disabled = !ready;
+  $('ranked').disabled = !ready || isFfaMode();
+  setRankedSub();
   $('quick').firstChild.textContent = ready ? 'QUICK PLAY' : `PICK ${SLOT_COUNT - cfg.loadout.length} MORE SKILL${SLOT_COUNT - cfg.loadout.length > 1 ? 'S' : ''}`;
 }
 $('m2').onclick = () => { cfg.mode = 2; renderMenu(); };
 $('m3').onclick = () => { cfg.mode = 3; renderMenu(); };
+$('mffa').onclick = () => { cfg.mode = 'ffa'; renderMenu(); };
 for (const b of document.querySelectorAll('#teampick button')) b.onclick = () => { cfg.team = Number(b.dataset.team); renderMenu(); };
 $('qh').onclick = () => { cfg.quality = 'high'; renderMenu(); applyQuality(); };
 $('ql').onclick = () => { cfg.quality = 'low'; renderMenu(); applyQuality(); };
@@ -289,7 +430,7 @@ camera.rotation.order = 'YXZ';
 scene.add(camera);
 let world = buildWorld(scene, DEFAULT_MAP);
 let worldMapId = DEFAULT_MAP;
-buildShowroom(scene);
+const showroom = buildShowroom(scene);
 // The arena for the match we joined (the menu always shows the first one).
 function enterMap(id) {
   useMap(id);
@@ -355,7 +496,7 @@ const rootGeo = new THREE.RingGeometry(0.55, 0.75, 28);
 const rootMat = new THREE.MeshBasicMaterial({ color: 0xb36bff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
 
 function makeEntity(pd) {
-  const color = TEAM_COLOR[pd.tm];
+  const color = colorOf(pd.tm);
   const group = new THREE.Group();
   group.add(buildModel(pd.md || DEFAULT_MODEL, color));
   const g = new THREE.Mesh(gunGeo, darkMat);
@@ -539,17 +680,19 @@ function buildSpellHud() {
 
 // ------------------------------------------------------------------ networking
 let searching = false, phaseOverride = null;
+let yawInit = false, meRespawn = 0;
 let ranked = false, meModel = cfg.model, ratingMsg = '', myRating = null;
 function connect(queue) {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
   ws.onopen = () => {
-    ws.send(JSON.stringify({ t: 'join', name: cfg.name, mode: cfg.mode, map: cfg.map, queue, team: cfg.team, loadout: cfg.loadout, model: cfg.model, token }));
+    ws.send(JSON.stringify({ t: 'join', name: cfg.name, mode: cfg.mode, map: chosenMap(), queue, team: cfg.team, loadout: cfg.loadout, model: cfg.model, token }));
     setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'ping', ts: performance.now() })); }, 2000);
   };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.t === 'welcome') {
       myId = m.id; myTeam = m.team; meLoadout = m.loadout; playing = true;
+      inFfa = m.mode === 'ffa'; yawInit = false; showroom.visible = false;
       ranked = !!m.ranked; meModel = m.model; myRating = m.rating;
       enterMap(m.map);
       me.speed = (MODELS[m.model] || MODELS[DEFAULT_MODEL]).speed;
@@ -561,8 +704,10 @@ function connect(queue) {
       $('hud').classList.remove('hidden');
       // ranked: we could not lock the mouse while searching, so ask for a click
       if (!locked) { $('pausetitle').textContent = 'MATCH FOUND'; $('pausesub').textContent = 'Click to take control.'; $('pause').classList.remove('hidden'); }
-      $('scB').classList.toggle('mine', myTeam === 0);
-      $('scR').classList.toggle('mine', myTeam === 1);
+      $('scB').classList.toggle('mine', !inFfa && myTeam === 0);
+      $('scR').classList.toggle('mine', !inFfa && myTeam === 1);
+      $('scB').classList.toggle('ffa', inFfa);
+      $('scR').classList.toggle('ffa', inFfa);
     } else if (m.t === 's') onSnapshot(m);
     else if (m.t === 'pong') pingMs = Math.round(performance.now() - m.ts);
     else if (m.t === 'full') showMessage('Match is full', 'Try again in a moment.');
@@ -605,7 +750,11 @@ function onSnapshot(d) {
   const mp = d.byId[myId];
   if (d.me && d.me.lo && d.me.lo.join() !== meLoadout.join()) { meLoadout = d.me.lo; buildSpellHud(); }
   if (d.me && d.me.md && d.me.md !== meModel) { meModel = d.me.md; me.speed = (MODELS[meModel] || MODELS[DEFAULT_MODEL]).speed; }
-  if (mp) { meAlive = !!mp.a; meHp = mp.hp; meMax = mp.mh || 100; meSf = mp.sf || 0; meBf = mp.bf || 0; }
+  if (mp) {
+    meAlive = !!mp.a; meHp = mp.hp; meMax = mp.mh || 100; meSf = mp.sf || 0; meBf = mp.bf || 0;
+    if (!yawInit) { yawInit = true; yaw = mp.yaw; pitch = 0; } // face the way the server spawned us
+  }
+  meRespawn = d.me ? d.me.rs || 0 : 0;
   syncZones(d.zn || []);
 
   if (d.me) {
@@ -630,7 +779,7 @@ function handleEvent(ev, d) {
   if (ev.k === 'shot') {
     if (ev.id === myId) return;
     const shooter = d.byId[ev.id];
-    addTracer([ev.ox, ev.oy - 0.25, ev.oz], [ev.ex, ev.ey, ev.ez], ev.bd ? 0xb36bff : shooter ? TEAM_COLOR[shooter.tm] : 0xffffff, ev.bd ? 0.25 : 0.1, ev.bd ? 0.03 : 0.012);
+    addTracer([ev.ox, ev.oy - 0.25, ev.oz], [ev.ex, ev.ey, ev.ez], ev.bd ? 0xb36bff : shooter ? colorOf(shooter.tm) : 0xffffff, ev.bd ? 0.25 : 0.1, ev.bd ? 0.03 : 0.012);
     const dist = Math.hypot(ev.ox - cam.x, ev.oz - cam.z);
     const vol = 0.04 * clamp(1 - dist / 60, 0, 1);
     if (vol > 0.002) beep(300, 0.07, 'square', vol, -120);
@@ -651,7 +800,7 @@ function handleEvent(ev, d) {
   } else if (ev.k === 'kill') {
     const row = document.createElement('div');
     const a = d.byId[ev.a], v = d.byId[ev.v];
-    const col = (p) => (p && p.tm === 0 ? '#6fa3ff' : '#ff7a62');
+    const col = (p) => (!p ? '#fff' : inFfa ? (p.id === myId ? '#6fa3ff' : cssOf(p.tm)) : p.tm === 0 ? '#6fa3ff' : '#ff7a62');
     row.innerHTML = `<span style="color:${col(a)}">${nameOf(ev.a)}</span> ${ev.head ? '&#127919;' : '&#10140;'} <span style="color:${col(v)}">${nameOf(ev.v)}</span>`;
     $('killfeed').appendChild(row);
     setTimeout(() => row.remove(), 5000);
@@ -668,53 +817,86 @@ function handleEvent(ev, d) {
     else if (ev.s === 'nova') { ring(ev.x, ev.y, ev.z, 0x6ab8ff, ev.r + 0.5, 0.5); beep(180, 0.3, 'triangle', 0.07, 500); }
     else if (ev.s === 'firepool') { ring(ev.tx, 0, ev.tz, 0xff7a1a, ev.r + 0.5, 0.6); beep(120, 0.35, 'sawtooth', 0.07, 200); }
     else if (ev.s === 'bind') { ring(ev.x, ev.y, ev.z, 0xb36bff, 1.4, 0.5, true); beep(420, 0.1, 'triangle', 0.05, 200); }
-    else if (ev.s === 'incendiary') { ring(ev.x, ev.y, ev.z, 0xff7a1a, 1.5, 0.5, true); beep(260, 0.2, 'sawtooth', 0.05, 200); }
+    else if (ev.s === 'pushback') {
+      ring(ev.x, ev.y, ev.z, 0xffb347, ev.r, 0.45);
+      ring(ev.x, ev.y + 0.9, ev.z, 0xffe0a0, ev.r * 0.7, 0.3);
+      beep(100, 0.3, 'sawtooth', 0.08, -40);
+    }
     else if (ev.s === 'barbed') { ring(ev.x, ev.y, ev.z, 0xd01030, 1.5, 0.5, true); beep(200, 0.2, 'sawtooth', 0.05, -80); }
-    else if (ev.s === 'explosive') { ring(ev.x, ev.y, ev.z, 0xffd23f, 1.5, 0.5, true); beep(330, 0.2, 'square', 0.05, 200); }
   } else if (ev.k === 'pushed') {
     const v = d.byId[ev.v];
     if (v) { ring(v.x, v.y, v.z, 0xffb347, 2, 0.35); beep(120, 0.2, 'square', 0.06, -50); }
   } else if (ev.k === 'bound') {
     const v = d.byId[ev.v];
     if (v) { ring(v.x, v.y, v.z, 0xb36bff, 1.4, 0.6); beep(150, 0.25, 'square', 0.06, -60); }
-  } else if (ev.k === 'blast') {
-    ring(ev.x, ev.y, ev.z, 0xffa21f, ev.r + 0.5, 0.35);
-    beep(110, 0.25, 'sawtooth', 0.06, -50);
+  } else if (ev.k === 'respawn') {
+    const v = d.byId[ev.v];
+    if (v) ring(v.x, v.y, v.z, 0xffffff, 1.8, 0.5, true);
+    if (ev.v === myId && v) { yaw = v.yaw; pitch = 0; errOff.x = errOff.y = errOff.z = 0; }
   }
 }
 
 let rosterHtml = '';
 function updateRoster(d) {
-  const mine = d.p.filter((p) => p.tm === myTeam), theirs = d.p.filter((p) => p.tm !== myTeam);
-  const row = (p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.tm === 0 ? '#6fa3ff' : '#ff7a62'}">${p.n}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
-    `<span class="bar"><i style="width:${Math.min(100, Math.round((p.hp / (p.mh || 100)) * 100))}%;background:${p.tm === myTeam ? '#4ade80' : '#ff5436'}"></i></span></div>`;
-  const html = mine.map(row).join('') + '<hr>' + theirs.map(row).join('');
+  const pct = (p) => Math.min(100, Math.round((p.hp / (p.mh || 100)) * 100));
+  let html;
+  if (inFfa) {
+    // leaderboard: most kills first
+    const list = [...d.p].sort((a, b) => b.k - a.k || a.d - b.d);
+    html = list.map((p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.id === myId ? '#6fa3ff' : cssOf(p.tm)}">${esc(p.n)}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
+      `<b class="kc">${p.k}</b></div>`).join('');
+    const top = list[0], second = list.find((p) => p.id !== myId);
+    const mine = d.byId[myId];
+    $('scB').textContent = mine ? mine.k : 0;
+    $('scR').textContent = (top && top.id !== myId ? top : second || top) ? (top && top.id !== myId ? top : second || top).k : 0;
+    $('rd').textContent = `FREE FOR ALL · FIRST TO ${d.kt}`;
+  } else {
+    const mine = d.p.filter((p) => p.tm === myTeam), theirs = d.p.filter((p) => p.tm !== myTeam);
+    const row = (p) => `<div class="r ${p.a ? '' : 'dead'}"><span class="nm" style="color:${p.tm === 0 ? '#6fa3ff' : '#ff7a62'}">${esc(p.n)}${p.id === myId ? ' (you)' : p.b ? ' &#9881;' : ''}</span>` +
+      `<span class="bar"><i style="width:${pct(p)}%;background:${p.tm === myTeam ? '#4ade80' : '#ff5436'}"></i></span></div>`;
+    html = mine.map(row).join('') + '<hr>' + theirs.map(row).join('');
+    $('scB').textContent = d.sc[0];
+    $('scR').textContent = d.sc[1];
+    $('rd').textContent = `ROUND ${d.rd} · FIRST TO 3`;
+  }
   if (html !== rosterHtml) { rosterHtml = html; $('roster').innerHTML = html; }
-  const sc = d.sc;
-  $('scB').textContent = sc[0];
-  $('scR').textContent = sc[1];
-  $('rd').textContent = `ROUND ${d.rd} · FIRST TO 3`;
 }
 
 // ------------------------------------------------------------------ input
 const held = (act) => !!keys[binds[act]];
+/** A key / mouse button / wheel notch went down: cast skills, queue a shot (semi-auto: one press = one shot). */
+function pressCode(code) {
+  keys[code] = true;
+  if (code === binds.skill1) castQ = true;
+  if (code === binds.skill2) castE = true;
+  if (code === binds.skill3) castR = true;
+  if (code === binds.shoot) shootBuf = 0.14; // short buffer so fast clicks are not lost
+}
 window.addEventListener('keydown', (e) => {
   if (!playing || listening) return;
   if (e.code === 'Tab') e.preventDefault();
   if (e.repeat) return;
-  keys[e.code] = true;
-  if (e.code === binds.skill1) castQ = true;
-  if (e.code === binds.skill2) castE = true;
-  if (e.code === binds.skill3) castR = true;
+  if (locked || e.code !== binds.shoot) pressCode(e.code);
   if (e.code === 'Space' || e.code === binds.jump || e.code.startsWith('Arrow')) e.preventDefault();
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; shootBuf = 0; });
 canvas.addEventListener('mousedown', (e) => {
-  if (!playing) return;
+  if (!playing || listening) return;
+  e.preventDefault();
   if (!locked) { lockPointer(); return; }
-  if (e.button === 0) shootBuf = 0.14; // semi-auto: one click = one shot (with a short buffer so fast clicks are not lost)
+  pressCode(`Mouse${e.button}`);
 });
+window.addEventListener('mouseup', (e) => { keys[`Mouse${e.button}`] = false; if (e.button > 2 && locked) e.preventDefault(); });
+window.addEventListener('auxclick', (e) => { if (locked) e.preventDefault(); });
+// Mouse wheel binds: each notch is a quick press and release.
+window.addEventListener('wheel', (e) => {
+  if (!playing || !locked || listening || !e.deltaY) return;
+  e.preventDefault();
+  const code = e.deltaY < 0 ? 'WheelUp' : 'WheelDown';
+  pressCode(code);
+  setTimeout(() => { keys[code] = false; }, 90);
+}, { passive: false });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 // Raw (unaccelerated) mouse where the browser supports it, plain pointer lock otherwise.
 function lockPointer() {
@@ -736,14 +918,15 @@ document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   if (locked) ignoreMoves = 3;
   if (!locked) shootBuf = 0;
-  $('pause').classList.toggle('hidden', locked || !playing || pickOpen || !$('binds').classList.contains('hidden'));
+  $('pause').classList.toggle('hidden', locked || !playing || pickOpen || !$('binds').classList.contains('hidden') || !$('xh').classList.contains('hidden'));
 });
 
 function startGame(queue) {
+  if (queue === 'ranked' && isFfaMode()) return;
   if (queue === 'ranked' && !account) { openAuth('login'); return; }
   if (cfg.loadout.length !== SLOT_COUNT) return;
   cfg.name = ($('name').value || 'Player').trim().slice(0, 14) || 'Player';
-  for (const k of ['name', 'mode', 'sens', 'model', 'quality', 'map', 'team']) store.set(k, cfg[k]);
+  for (const k of ['name', 'mode', 'sens', 'model', 'quality', 'map', 'ffaMap', 'team']) store.set(k, cfg[k]);
   store.set('loadout3', cfg.loadout);
   audio();
   if (queue === 'ranked') { searching = true; $('search').classList.remove('hidden'); $('searchtime').textContent = '0s'; }
@@ -841,7 +1024,7 @@ function localShot() {
   const rx = Math.cos(yaw), rz = -Math.sin(yaw);
   const start = [ex + rx * 0.25 + dx * 0.7, ey - 0.22 + dy * 0.7, ez + rz * 0.25 + dz * 0.7];
   const bindShot = (meBf & 8) !== 0;
-  addTracer(start, [ex + dx * t, ey + dy * t, ez + dz * t], bindShot ? 0xb36bff : TEAM_COLOR[myTeam], bindShot ? 0.25 : 0.1, bindShot ? 0.03 : 0.012);
+  addTracer(start, [ex + dx * t, ey + dy * t, ez + dz * t], bindShot ? 0xb36bff : colorOf(myTeam), bindShot ? 0.25 : 0.1, bindShot ? 0.03 : 0.012);
   flashT = 0.04;
   kick = 0.07;
   beep(220, 0.06, 'square', 0.05, -100);
@@ -947,11 +1130,11 @@ function render(dt, now) {
     ent.group.scale.set(1, ent.cy, 1);
     ent.sprite.scale.set(2.2, 0.62 / ent.cy, 1);
     ent.eye = crouching ? 0.95 : EYE_H;
-    const ally = pd.tm === myTeam;
+    const ally = !inFfa && pd.tm === myTeam;
     drawTag(ent, pd, ally);
     // teammates' plates show through walls; an enemy's plate is only visible while you can actually see the enemy
     if (ent.plateAlly !== ally) { ent.plateAlly = ally; ent.sprite.material.depthTest = !ally; ent.sprite.material.needsUpdate = true; }
-    if (pd.a && pd.tm === myTeam && !spectateTarget) spectateTarget = ent;
+    if (pd.a && ally && !spectateTarget) spectateTarget = ent;
   }
   for (const [id, ent] of ents) {
     if (!seen.has(id)) { scene.remove(ent.group); ents.delete(id); }
@@ -1018,7 +1201,7 @@ function updateHud(now) {
     setText(spells[i].querySelector('.cdt'), isReady || !meAlive ? '' : rem < 1 ? rem.toFixed(1) : String(Math.ceil(rem)));
   }
 
-  const BUFF_BIT = { incendiary: 1, barbed: 2, explosive: 4, bind: 8 };
+  const BUFF_BIT = { barbed: 2, bind: 8 };
   for (let i = 0; i < spells.length; i++) spells[i].classList.toggle('buffed', !!(meAlive && (meBf & (BUFF_BIT[meLoadout[i]] || 0))));
   const tags = [];
   if (meAlive) {
@@ -1026,9 +1209,7 @@ function updateHud(now) {
     if (meSf & 2) tags.push('<span style="color:#6ab8ff">SLOWED</span>');
     if (meSf & 4) tags.push('<span style="color:#ff8a3a">BURNING</span>');
     if (meSf & 8) tags.push('<span style="color:#ff4060">BLEEDING</span>');
-    if (meBf & 1) tags.push('<span style="color:#ffb04a">INCENDIARY ROUNDS</span>');
     if (meBf & 2) tags.push('<span style="color:#ff6a80">BARBED ROUNDS</span>');
-    if (meBf & 4) tags.push('<span style="color:#ffd23f">EXPLOSIVE ROUNDS</span>');
     if (meBf & 8) tags.push('<span style="color:#c79bff">BIND: NEXT SHOT ROOTS</span>');
   }
   const tagHtml = tags.join('');
@@ -1042,19 +1223,21 @@ function updateHud(now) {
   let big = '', small = '';
   if (phase === 'countdown') {
     big = String(Math.max(1, Math.ceil(phaseT - sinceSnap)));
-    small = `ROUND ${latest.rd}`;
+    small = inFfa ? 'FREE FOR ALL' : `ROUND ${latest.rd}`;
   } else if (phase === 'roundEnd') {
     big = latest.lw === -1 ? 'DRAW' : latest.lw === myTeam ? 'ROUND WON' : 'ROUND LOST';
   } else if (phase === 'matchEnd') {
     big = latest.w === myTeam ? 'VICTORY' : 'DEFEAT';
-    small = 'NEXT MATCH STARTING...';
+    small = inFfa && latest.byId && latest.byId[latest.p.find((q) => q.tm === latest.w)?.id] ? `WINNER: ${esc(latest.p.find((q) => q.tm === latest.w).n)} · NEXT MATCH STARTING...` : 'NEXT MATCH STARTING...';
     if (ranked && ratingMsg) big += `<span class="rt">${esc(ratingMsg)}</span>`;
   }
   const banner = $('banner');
   const html = big ? `${big}${small ? `<small>${small}</small>` : ''}` : '';
   if (banner.innerHTML !== html) banner.innerHTML = html;
 
-  $('spectate').classList.toggle('hidden', meAlive || phase === 'countdown');
+  const sp = $('spectate');
+  sp.classList.toggle('hidden', meAlive || phase === 'countdown');
+  if (inFfa && !meAlive && phase === 'live') setText(sp, `RESPAWNING IN ${Math.max(1, Math.ceil(meRespawn - sinceSnap))}`); else setText(sp, 'SPECTATING');
   $('pickcount').textContent = String(Math.max(0, Math.ceil(phaseT - sinceSnap)));
   setText($('ping'), `${Math.round(fpsEma)} fps \u00b7 ${pingMs} ms${performance.now() < toastT ? ' \u00b7 switched to Fast graphics' : ''}`);
 }
@@ -1079,5 +1262,9 @@ window.__aim = {
   forcePhase(p) { phaseOverride = p; if (p) phase = p; updatePickWindow(); },
   get sceneObjects() { let n = 0; scene.traverse((o) => { if (o.isMesh) n++; }); return n; },
   get myId() { return myId; },
+  get ffa() { return inFfa; },
+  get binds() { return binds; },
+  get xh() { return xh; },
+  press(code) { pressCode(code); },
   forceFire(v) { locked = v; shootBuf = v ? 0.14 : 0; },
 };

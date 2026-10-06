@@ -1,25 +1,28 @@
 // Authoritative game room: players, bots, rounds, hitscan, skills, status effects.
 import {
   DT, eyeH, FIRE_INTERVAL, BODY_DMG, HEAD_DMG, RANGE, SPELLS, MODELS, DEFAULT_MODEL, SLOT_COUNT,
-  ARENA, WALLS, HAZARDS, DEFAULT_MAP, MAPS, useMap, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint,
+  ARENA, WALLS, HAZARDS, DEFAULT_MAP, MAPS, useMap, stepPlayer, lookDir, rayWalls, rayWorld, rayPlayer, spawnPoint, ffaSpawn, ffaSpawnCount,
 } from './sim.js';
 
 export const WIN_ROUNDS = 3;
 export const ROUND_TIME = 90;
 export const MATCH_END_TIME = 15; // seconds players get to re-pick champion + skills after a match
+export const FFA_PLAYERS = 8;   // free-for-all: humans + bots
+export const FFA_KILLS = 20;     // first to this many kills wins
+export const FFA_TIME = 300;     // or the best score after 5 minutes
+const RESPAWN_TIME = 3, SPAWN_PROTECT = 1.5;
 export const MAX_REWIND = 24; // ticks (400 ms at 60 Hz): the most a shot can be rewound
 
 // tuning
 const FIRE_TOLERANCE = 0.06; // seconds
 const BUFF_TIME = 6;
-const BURN_DPS = 14, BURN_LINGER = 1.2, BURN_ON_HIT = 3;
+const BURN_DPS = 14, BURN_LINGER = 1.2;
 const BLEED_DPS = 6, BLEED_MOVING_MULT = 1.8, BLEED_TIME = 4;
 const BIND_TIME = 1.8;
 const SHOCK_RANGE = 30, SHOCK_RADIUS = 0.9, SHOCK_PUSH = 24;
+const PUSHBACK_RADIUS = 7, PUSHBACK_FORCE = 26;
 const HAZARD_BURN = 1.0;
 const POOL_RANGE = 30, POOL_RADIUS = 3, POOL_TIME = 5;
-const HIT_FIRE_RADIUS = 2.2, HIT_FIRE_TIME = 3.5;
-const BLAST_RADIUS = 3, BLAST_DMG = 14;
 const NOVA_RADIUS = 5, NOVA_DMG = 12, NOVA_SLOW = 3;
 
 const SPELL_IDS = Object.keys(SPELLS);
@@ -71,7 +74,7 @@ function applyModel(p, key) {
 
 function clearStatuses(p) {
   p.rootT = 0; p.slowT = 0; p.burnT = 0; p.bleedT = 0; p.burnSrc = null; p.bleedSrc = null;
-  p.fireBuffT = 0; p.bleedBuffT = 0; p.blastBuffT = 0; p.bindBuffT = 0;
+  p.bleedBuffT = 0; p.bindBuffT = 0; p.invulnT = 0;
 }
 
 function makePlayer(team, slot, isBot, name) {
@@ -82,7 +85,7 @@ function makePlayer(team, slot, isBot, name) {
     model: DEFAULT_MODEL, maxHp: 100, speed: 7, healMult: 1, hp: 100,
     loadout: randomLoadout(), cd: [0, 0, 0], fireCd: 0, shieldT: 0,
     lastSeq: 0, lastQueued: 0, queue: [], lastInput: NEUTRAL(),
-    kills: 0, deaths: 0, lastHurt: -99,
+    kills: 0, deaths: 0, lastHurt: -99, respawnT: 0, invulnT: 0,
     hist: [], // recent positions {n,x,y,z} for lag compensation
     ai: newAI(), skill: rand(0.55, 0.85),
   };
@@ -98,7 +101,8 @@ export class Room {
     this.ranked = !!opts.ranked;
     this.onMatchEnd = opts.onMatchEnd || null; // (room, winnerTeam) when a ranked match ends
     this.onForfeit = opts.onForfeit || null;   // (room, player) when a human leaves a ranked match early
-    this.size = mode;
+    this.ffa = mode === 'ffa';
+    this.size = this.ffa ? FFA_PLAYERS : mode;
     this.players = [];
     this.zones = [];
     this.phase = 'countdown';
@@ -112,9 +116,14 @@ export class Room {
     this.tick = 0;
     this.time = 0;
     this.emptyT = 0;
-    for (const team of [0, 1]) {
-      for (let i = 0; i < this.size; i++) {
-        this.players.push(makePlayer(team, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length]));
+    if (this.ffa) {
+      // free-for-all: every player is their own team (team === slot), so "enemy" simply means "someone else"
+      for (let i = 0; i < this.size; i++) this.players.push(makePlayer(i, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length]));
+    } else {
+      for (const team of [0, 1]) {
+        for (let i = 0; i < this.size; i++) {
+          this.players.push(makePlayer(team, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length]));
+        }
       }
     }
     this.resetRound();
@@ -130,8 +139,9 @@ export class Room {
     for (const p of this.players) if (!p.isBot) humanCount[p.team]++;
     let order = humanCount[0] <= humanCount[1] ? [0, 1] : [1, 0];
     if (opts.team === 0 || opts.team === 1) order = [opts.team];
+    if (this.ffa) order = [-1];
     for (const team of order) {
-      const bot = this.players.find((p) => p.isBot && p.team === team);
+      const bot = this.players.find((p) => p.isBot && (this.ffa || p.team === team));
       if (bot) {
         bot.isBot = false;
         bot.ws = ws;
@@ -158,7 +168,7 @@ export class Room {
   /** Open slots a human could take on each team: [team0, team1]. */
   openSlots() {
     const o = [0, 0];
-    for (const p of this.players) if (p.isBot) o[p.team]++;
+    for (const p of this.players) if (p.isBot) o[this.ffa ? 0 : p.team]++;
     return o;
   }
 
@@ -199,8 +209,14 @@ export class Room {
 
   // -------------------------------------------------------------- rounds
   resetRound() {
+    useMap(this.mapId);
     for (const p of this.players) {
-      const sp = spawnPoint(p.team, p.slot, this.size);
+      let sp;
+      if (this.ffa) {
+        const f = ffaSpawn(p.slot * 2 + 1); // spread the starting spots around the map
+        sp = { x: f.x, z: f.z, yaw: Math.atan2(f.x, f.z) };
+      } else sp = spawnPoint(p.team, p.slot);
+      p.respawnT = 0;
       p.x = sp.x; p.y = 0; p.z = sp.z;
       p.vx = p.vy = p.vz = 0; p.crouch = false;
       p.dvx = p.dvz = 0; p.dashT = 0;
@@ -216,7 +232,7 @@ export class Room {
       p.ai.lx = p.x; p.ai.lz = p.z;
     }
     this.zones = [];
-    this.roundT = ROUND_TIME;
+    this.roundT = this.ffa ? FFA_TIME : ROUND_TIME;
   }
 
   endRound(w) {
@@ -232,6 +248,43 @@ export class Room {
       this.phase = 'roundEnd';
       this.phaseT = 3.5;
     }
+  }
+
+  /** FFA: finish the match; the winner is the player with the most kills (fewest deaths breaks ties). */
+  endFfa() {
+    let best = null;
+    for (const p of this.players) {
+      if (!best || p.kills > best.kills || (p.kills === best.kills && p.deaths < best.deaths)) best = p;
+    }
+    this.winner = best ? best.team : -1;
+    this.lastWinner = this.winner;
+    this.phase = 'matchEnd';
+    this.phaseT = MATCH_END_TIME;
+    this.events.push({ k: 'round', w: this.winner });
+  }
+
+  /** FFA: bring a dead player back at the spawn point farthest from living enemies. */
+  respawn(p) {
+    const n = ffaSpawnCount();
+    const cands = [];
+    for (let i = 0; i < n; i++) {
+      const f = ffaSpawn(i);
+      let nearest = Infinity;
+      for (const o of this.players) if (o !== p && o.alive) nearest = Math.min(nearest, Math.hypot(o.x - f.x, o.z - f.z));
+      cands.push({ f, score: nearest });
+    }
+    cands.sort((a, b) => b.score - a.score);
+    const c = pick(cands.slice(0, Math.min(3, cands.length))).f;
+    p.x = c.x; p.y = 0; p.z = c.z;
+    p.vx = p.vy = p.vz = 0; p.dvx = p.dvz = 0; p.dashT = 0; p.crouch = false;
+    p.yaw = Math.atan2(c.x, c.z); p.pitch = 0;
+    p.hp = p.maxHp; p.alive = true; p.fireCd = 0;
+    clearStatuses(p);
+    p.invulnT = SPAWN_PROTECT; p.shieldT = SPAWN_PROTECT;
+    p.hist = [];
+    p.queue = [];
+    p.ai = newAI(); p.ai.lx = p.x; p.ai.lz = p.z;
+    this.events.push({ k: 'respawn', v: p.id });
   }
 
   // -------------------------------------------------------------- tick
@@ -276,10 +329,14 @@ export class Room {
       p.fireCd = Math.max(0, p.fireCd - dt);
       for (let s = 0; s < SLOT_COUNT; s++) p.cd[s] = Math.max(0, p.cd[s] - dt);
       p.shieldT = Math.max(0, p.shieldT - dt);
-      p.fireBuffT = Math.max(0, p.fireBuffT - dt);
       p.bleedBuffT = Math.max(0, p.bleedBuffT - dt);
-      p.blastBuffT = Math.max(0, p.blastBuffT - dt);
+      p.invulnT = Math.max(0, p.invulnT - dt);
       p.bindBuffT = Math.max(0, p.bindBuffT - dt);
+
+      if (this.ffa && this.phase === 'live' && !p.alive) {
+        p.respawnT -= dt;
+        if (p.respawnT <= 0) this.respawn(p);
+      }
 
       if (this.phase === 'countdown') {
         if (p.queue.length) {
@@ -309,16 +366,22 @@ export class Room {
       this.tickStatuses(dt);
 
       this.roundT -= dt;
-      const alive = [0, 0];
-      const hp = [0, 0];
-      for (const p of this.players) if (p.alive) { alive[p.team]++; hp[p.team] += p.hp; }
-      if (alive[0] === 0 || alive[1] === 0 || this.roundT <= 0) {
-        let w = -1;
-        if (alive[0] === 0 && alive[1] === 0) w = -1;
-        else if (alive[1] === 0) w = 0;
-        else if (alive[0] === 0) w = 1;
-        else if (hp[0] !== hp[1]) w = hp[0] > hp[1] ? 0 : 1;
-        this.endRound(w);
+      if (this.ffa) {
+        let top = 0;
+        for (const p of this.players) top = Math.max(top, p.kills);
+        if (top >= FFA_KILLS || this.roundT <= 0) this.endFfa();
+      } else {
+        const alive = [0, 0];
+        const hp = [0, 0];
+        for (const p of this.players) if (p.alive) { alive[p.team]++; hp[p.team] += p.hp; }
+        if (alive[0] === 0 || alive[1] === 0 || this.roundT <= 0) {
+          let w = -1;
+          if (alive[0] === 0 && alive[1] === 0) w = -1;
+          else if (alive[1] === 0) w = 0;
+          else if (alive[0] === 0) w = 1;
+          else if (hp[0] !== hp[1]) w = hp[0] > hp[1] ? 0 : 1;
+          this.endRound(w);
+        }
       }
     } else if (this.zones.length) {
       this.zones.length = 0;
@@ -389,7 +452,7 @@ export class Room {
 
   /** Damage over time: no hit marker, but kills are credited to the source. */
   dot(victim, amount, src) {
-    if (!victim.alive) return;
+    if (!victim.alive || victim.invulnT > 0) return;
     victim.hp -= amount;
     victim.lastHurt = this.time;
     if (victim.hp <= 0) this.kill(victim, src || victim, false);
@@ -399,6 +462,7 @@ export class Room {
     victim.hp = 0;
     victim.alive = false;
     victim.deaths++;
+    victim.respawnT = RESPAWN_TIME;
     if (attacker !== victim) attacker.kills++;
     this.events.push({ k: 'kill', a: attacker.id, v: victim.id, head: head ? 1 : 0 });
   }
@@ -441,20 +505,9 @@ export class Room {
     return best;
   }
 
-  /** On-hit effects from Incendiary / Barbed / Explosive Rounds. */
+  /** On-hit effects from Barbed Rounds. */
   onRifleHit(p, v) {
-    if (p.blastBuffT > 0) {
-      this.events.push({ k: 'blast', x: r2(v.x), y: r2(v.y), z: r2(v.z), r: BLAST_RADIUS });
-      for (const o of this.players) {
-        if (o.team === p.team || !o.alive || o === v) continue;
-        if (Math.hypot(o.x - v.x, o.z - v.z) <= BLAST_RADIUS && Math.abs(o.y - v.y) < 3) this.damage(o, BLAST_DMG, p, false);
-      }
-    }
     if (!v.alive) return;
-    if (p.fireBuffT > 0) {
-      this.addZone(p, v.x, v.z, HIT_FIRE_RADIUS, HIT_FIRE_TIME);
-      this.ignite(v, p, BURN_ON_HIT);
-    }
     if (p.bleedBuffT > 0) { v.bleedT = BLEED_TIME; v.bleedSrc = p; }
   }
 
@@ -477,8 +530,8 @@ export class Room {
   }
 
   damage(victim, amount, attacker, head) {
-    if (!victim.alive) return;
-    if (victim.shieldT > 0) amount *= 0.4;
+    if (!victim.alive || victim.invulnT > 0) return;
+    if (victim.shieldT > 0) amount *= 0.6; // Shield: 40% less damage
     victim.hp -= amount;
     victim.lastHurt = this.time;
     this.events.push({ k: 'hit', a: attacker.id, v: victim.id, dmg: Math.round(amount), head: head ? 1 : 0 });
@@ -525,11 +578,28 @@ export class Room {
         ev.hit = best ? 1 : 0;
         break;
       }
+      case 'pushback': { // radial blast: shoves every enemy within range away from you, no damage
+        let n = 0;
+        for (const o of this.players) {
+          if (o.team === p.team || !o.alive) continue;
+          let ddx = o.x - p.x, ddz = o.z - p.z;
+          const dd = Math.hypot(ddx, ddz);
+          if (dd > PUSHBACK_RADIUS || Math.abs(o.y - p.y) > 3) continue;
+          if (dd < 0.05) { ddx = -Math.sin(inp.yaw); ddz = -Math.cos(inp.yaw); } else { ddx /= dd; ddz /= dd; }
+          o.dvx = ddx * PUSHBACK_FORCE; o.dvz = ddz * PUSHBACK_FORCE; o.dashT = 0.3; o.vy = 3;
+          o.rootT = 0;
+          this.events.push({ k: 'pushed', v: o.id });
+          n++;
+        }
+        ev.r = PUSHBACK_RADIUS;
+        ev.n = n;
+        break;
+      }
       case 'bind': p.bindBuffT = BUFF_TIME; break; // next rifle shot roots its target
       case 'firepool': {
         let t = Math.min(rayWorld(ox, oy, oz, dx, dy, dz, POOL_RANGE), POOL_RANGE);
         if (!Number.isFinite(t)) t = POOL_RANGE;
-        const px = clamp(ox + dx * t, -29, 29), pz = clamp(oz + dz * t, -29, 29);
+        const px = clamp(ox + dx * t, -ARENA + 1, ARENA - 1), pz = clamp(oz + dz * t, -ARENA + 1, ARENA - 1);
         this.addZone(p, px, pz, POOL_RADIUS, POOL_TIME);
         ev.tx = r2(px); ev.tz = r2(pz); ev.r = POOL_RADIUS;
         break;
@@ -543,9 +613,7 @@ export class Room {
         }
         ev.r = NOVA_RADIUS;
         break;
-      case 'incendiary': p.fireBuffT = BUFF_TIME; break;
       case 'barbed': p.bleedBuffT = BUFF_TIME; break;
-      case 'explosive': p.blastBuffT = BUFF_TIME; break;
       default: break;
     }
     this.events.push(ev);
@@ -555,13 +623,13 @@ export class Room {
   snapshot() {
     return {
       t: 's', n: this.tick, ph: this.phase, pt: r2(this.phaseT), rt: Math.round(this.roundT * 10) / 10,
-      sc: this.scores, rd: this.round, lw: this.lastWinner, w: this.winner, mode: this.mode,
+      sc: this.scores, rd: this.round, lw: this.lastWinner, w: this.winner, mode: this.mode, ffa: this.ffa ? 1 : 0, kt: FFA_KILLS,
       p: this.players.map((p) => ({
         id: p.id, tm: p.team, n: p.name, b: p.isBot ? 1 : 0, md: p.model,
         x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw), pit: r3(p.pitch),
         hp: Math.ceil(p.hp), mh: p.maxHp, a: p.alive ? 1 : 0, sh: p.shieldT > 0 ? 1 : 0,
         sf: (p.rootT > 0 ? 1 : 0) | (p.slowT > 0 ? 2 : 0) | (p.burnT > 0 ? 4 : 0) | (p.bleedT > 0 ? 8 : 0) | (p.crouch ? 16 : 0),
-        bf: (p.fireBuffT > 0 ? 1 : 0) | (p.bleedBuffT > 0 ? 2 : 0) | (p.blastBuffT > 0 ? 4 : 0) | (p.bindBuffT > 0 ? 8 : 0),
+        bf: (p.bleedBuffT > 0 ? 2 : 0) | (p.bindBuffT > 0 ? 8 : 0),
         k: p.kills, d: p.deaths,
       })),
       zn: this.zones.map((z) => ({ id: z.id, x: r2(z.x), z: r2(z.z), r: z.r, t: r2(z.t), m: z.max })),
@@ -571,7 +639,7 @@ export class Room {
 
   meFor(p) {
     return {
-      id: p.id, ack: p.lastSeq, cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
+      id: p.id, ack: p.lastSeq, rs: r2(p.alive ? 0 : Math.max(0, p.respawnT)), cd: p.cd.map((v) => r2(v)), lo: p.loadout, md: p.model,
       st: {
         x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, dvx: p.dvx, dvz: p.dvz, dashT: p.dashT,
         rootT: p.rootT, slowT: p.slowT,
@@ -582,74 +650,77 @@ export class Room {
 
 // ====================================================================== navigation grid
 // 1 m cells; a cell is blocked when a player standing at its centre would touch a wall.
-const NAV_N = ARENA * 2;
 const NAV_CLEAR = 0.6;
+const NAV_MAX = 100 * 100; // biggest map is 2 * 48 = 96 cells wide
 const navCache = new Map();
-let navBlocked = new Uint8Array(NAV_N * NAV_N);
+let navN = 60, navHalf = 30; // grid width (cells) and half-extent of the current map
+let navBlocked = new Uint8Array(navN * navN);
 let navMapId = null;
 /** Switch the bots' walkability grid to the given map (cached). Called before each room step. */
 export function useNav(mapId) {
   if (navMapId === mapId) return;
   navMapId = mapId;
+  const half = MAPS[mapId].size, N = half * 2;
   if (!navCache.has(mapId)) {
-    const grid = new Uint8Array(NAV_N * NAV_N);
+    const grid = new Uint8Array(N * N);
     const walls = MAPS[mapId].walls, hazards = MAPS[mapId].hazards || [];
-    for (let iz = 0; iz < NAV_N; iz++) {
-      for (let ix = 0; ix < NAV_N; ix++) {
-        const cx = -ARENA + ix + 0.5, cz = -ARENA + iz + 0.5;
-        let b = Math.abs(cx) > ARENA - NAV_CLEAR || Math.abs(cz) > ARENA - NAV_CLEAR;
+    for (let iz = 0; iz < N; iz++) {
+      for (let ix = 0; ix < N; ix++) {
+        const cx = -half + ix + 0.5, cz = -half + iz + 0.5;
+        let b = Math.abs(cx) > half - NAV_CLEAR || Math.abs(cz) > half - NAV_CLEAR;
         if (!b) {
           for (const w of walls) {
             if (cx > w.minX - NAV_CLEAR && cx < w.maxX + NAV_CLEAR && cz > w.minZ - NAV_CLEAR && cz < w.maxZ + NAV_CLEAR) { b = true; break; }
           }
         }
         if (!b) for (const h of hazards) if (Math.hypot(cx - h.x, cz - h.z) < h.r + NAV_CLEAR) { b = true; break; }
-        grid[iz * NAV_N + ix] = b ? 1 : 0;
+        grid[iz * N + ix] = b ? 1 : 0;
       }
     }
     navCache.set(mapId, grid);
   }
   navBlocked = navCache.get(mapId);
+  navN = N; navHalf = half;
 }
 useNav('olympus');
 const navCellOf = (x, z) => {
-  const ix = clamp(Math.floor(x + ARENA), 0, NAV_N - 1), iz = clamp(Math.floor(z + ARENA), 0, NAV_N - 1);
-  return iz * NAV_N + ix;
+  const ix = clamp(Math.floor(x + navHalf), 0, navN - 1), iz = clamp(Math.floor(z + navHalf), 0, navN - 1);
+  return iz * navN + ix;
 };
 /** Nearest unblocked cell (spiral search) so a bot hugging a wall still has a valid start. */
 function navFreeCell(cell) {
   if (!navBlocked[cell]) return cell;
-  const cx = cell % NAV_N, cz = Math.floor(cell / NAV_N);
+  const cx = cell % navN, cz = Math.floor(cell / navN);
   for (let r = 1; r <= 4; r++) {
     for (let dz = -r; dz <= r; dz++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
         const x = cx + dx, z = cz + dz;
-        if (x < 0 || z < 0 || x >= NAV_N || z >= NAV_N) continue;
-        if (!navBlocked[z * NAV_N + x]) return z * NAV_N + x;
+        if (x < 0 || z < 0 || x >= navN || z >= navN) continue;
+        if (!navBlocked[z * navN + x]) return z * navN + x;
       }
     }
   }
   return cell;
 }
 const NAV_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-const navQueue = new Int32Array(NAV_N * NAV_N);
+const navQueue = new Int32Array(NAV_MAX);
 /** Distance field (in steps) from `goal` over free cells; -1 = unreachable. */
 export function navField(goal) {
-  const dist = new Int16Array(NAV_N * NAV_N).fill(-1);
+  const dist = new Int16Array(navN * navN).fill(-1);
   let head = 0, tail = 0;
   goal = navFreeCell(goal);
   dist[goal] = 0;
   navQueue[tail++] = goal;
   while (head < tail) {
     const c = navQueue[head++];
-    const cx = c % NAV_N, cz = (c - cx) / NAV_N;
+    const cx = c % navN, cz = (c - cx) / navN;
     for (const [dx, dz] of NAV_DIRS) {
       const x = cx + dx, z = cz + dz;
-      if (x < 0 || z < 0 || x >= NAV_N || z >= NAV_N) continue;
-      const n = z * NAV_N + x;
+      if (x < 0 || z < 0 || x >= navN || z >= navN) continue;
+      const n = z * navN + x;
       if (dist[n] !== -1 || navBlocked[n]) continue;
-      if (dx !== 0 && dz !== 0 && (navBlocked[cz * NAV_N + x] || navBlocked[z * NAV_N + cx])) continue; // no corner cutting
+      if (dx !== 0 && dz !== 0 && (navBlocked[cz * navN + x] || navBlocked[z * navN + cx])) continue; // no corner cutting
       dist[n] = dist[c] + 1;
       navQueue[tail++] = n;
     }
@@ -665,19 +736,19 @@ function navWaypoint(field, x, z, steps = 3) {
   let c = navFreeCell(navCellOf(x, z));
   if (field[c] < 0) return null;
   for (let i = 0; i < steps && field[c] > 0; i++) {
-    const cx = c % NAV_N, cz = (c - cx) / NAV_N;
+    const cx = c % navN, cz = (c - cx) / navN;
     let best = c, bd = field[c];
     for (const [dx, dz] of NAV_DIRS) {
       const nx = cx + dx, nz = cz + dz;
-      if (nx < 0 || nz < 0 || nx >= NAV_N || nz >= NAV_N) continue;
-      const n = nz * NAV_N + nx;
+      if (nx < 0 || nz < 0 || nx >= navN || nz >= navN) continue;
+      const n = nz * navN + nx;
       if (field[n] >= 0 && field[n] < bd) { bd = field[n]; best = n; }
     }
     if (best === c) break;
     c = best;
   }
-  const cx = c % NAV_N, cz = (c - cx) / NAV_N;
-  return { x: -ARENA + cx + 0.5, z: -ARENA + cz + 0.5 };
+  const cx = c % navN, cz = (c - cx) / navN;
+  return { x: -navHalf + cx + 0.5, z: -navHalf + cz + 0.5 };
 }
 
 // ====================================================================== bot AI
@@ -778,12 +849,11 @@ function botThink(room, p, dt) {
       case 'shield': want = visible && ai.seenT > 0.1 && room.time - p.lastHurt < 1.0; break;
       case 'shockwave': want = visible && aimed && dist < 20 && ai.seenT > 0.2; break;
       case 'dash': want = visible && Math.random() < 0.01; break;
+      case 'pushback': want = visible && dist < 5.5; break;
       case 'nova': want = visible && dist < 4.5; break;
       case 'bind': want = visible && p.bindBuffT <= 0 && dist < 30 && ai.seenT > 0.2; break;
       case 'firepool': want = visible && dist < 26 && Math.random() < 0.02; break;
-      case 'incendiary': want = visible && ai.seenT > 0.2 && p.fireBuffT <= 0 && dist < 30; break;
       case 'barbed': want = visible && ai.seenT > 0.2 && p.bleedBuffT <= 0 && dist < 30; break;
-      case 'explosive': want = visible && ai.seenT > 0.2 && p.blastBuffT <= 0 && dist < 30; break;
       default: break;
     }
     if (want) inp[SLOT_FLAG[s]] = true;

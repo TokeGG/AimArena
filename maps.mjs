@@ -1,7 +1,6 @@
-// Map checks for every entry in maps.js (own ray/BFS helpers: sim.js has a single global map).
+// Map checks for every entry in maps.js (own ray/BFS helpers; reads map data directly, no sim.js).
 import assert from 'node:assert/strict';
-import { MAPS, MAP_IDS, DEFAULT_MAP } from '../maps.js';
-import { spawnPoint, ARENA, WALLS } from '../sim.js';
+import { MAPS, MAP_IDS, DEFAULT_MAP, TEAM_MAP_IDS, FFA_MAP_IDS } from '../maps.js';
 
 const EYE = 1.6, GAP_MIN = 2.2, CLEAR = 0.6, EPS = 1e-6;
 const KINDS = ['temple', 'shield', 'cover', 'low'];
@@ -27,20 +26,22 @@ function rayHit(walls, ox, oz, dx, dz, y, maxT = Infinity) {
   return best;
 }
 
+// Start points used for flood fill: team spawns (team 1 = -x,-z) or the FFA spawns.
+const startPoints = (map) => (map.ffa ? map.ffaSpawns : map.spawns.flatMap((s) => [{ x: s.x, z: s.z }, { x: -s.x, z: -s.z }]));
+
 function reachability(map) {
-  const N = ARENA * 2;
+  const A = map.size, N = A * 2;
   const blocked = new Uint8Array(N * N);
   for (let iz = 0; iz < N; iz++) for (let ix = 0; ix < N; ix++) {
-    const cx = -ARENA + ix + 0.5, cz = -ARENA + iz + 0.5;
+    const cx = -A + ix + 0.5, cz = -A + iz + 0.5;
     const inWall = map.walls.some((w) => cx > w.minX - CLEAR && cx < w.maxX + CLEAR && cz > w.minZ - CLEAR && cz < w.maxZ + CLEAR);
     const inHaz = map.hazards.some((h) => Math.hypot(cx - h.x, cz - h.z) < h.r);
     blocked[iz * N + ix] = inWall || inHaz ? 1 : 0;
   }
   const seen = new Uint8Array(N * N), queue = [];
-  for (const n of [2, 3]) for (let t = 0; t < 2; t++) for (let i = 0; i < n; i++) {
-    const s = spawnPoint(t, i, n);
-    const c = Math.floor(s.z + ARENA) * N + Math.floor(s.x + ARENA);
-    assert.ok(!blocked[c], `spawn cell blocked in ${map.id}`);
+  for (const s of startPoints(map)) {
+    const c = Math.floor(s.z + A) * N + Math.floor(s.x + A);
+    assert.ok(!blocked[c], `spawn cell blocked in ${map.id} at ${s.x},${s.z}`);
     if (!seen[c]) { seen[c] = 1; queue.push(c); }
   }
   for (let q = 0; q < queue.length; q++) {
@@ -57,27 +58,35 @@ function reachability(map) {
   return { pct: 100 * queue.length / free, free, reached: queue.length };
 }
 
-// Longest unobstructed eye-height line that stays inside the band |z| < 12 (origins on a 1 m grid, every 3 degrees).
-function longestBandLine(walls) {
+// Longest unobstructed eye-height line anywhere in the arena (origins on a 1 m grid, every 3 degrees).
+function longestLine(map) {
+  const A = map.size, walls = map.walls;
   let best = 0;
-  for (let ox = -29.5; ox <= 29.5; ox += 1) for (let oz = -11.5; oz <= 11.5; oz += 1) {
+  for (let ox = -A + 0.5; ox <= A - 0.5; ox += 1) for (let oz = -A + 0.5; oz <= A - 0.5; oz += 1) {
     if (walls.some((w) => ox > w.minX && ox < w.maxX && oz > w.minZ && oz < w.maxZ && w.h > EYE)) continue;
     for (let a = 0; a < 360; a += 3) {
       const dx = Math.cos(a * Math.PI / 180), dz = Math.sin(a * Math.PI / 180);
       let tEnd = Infinity;
-      if (dx > 1e-9) tEnd = Math.min(tEnd, (ARENA - ox) / dx); else if (dx < -1e-9) tEnd = Math.min(tEnd, (-ARENA - ox) / dx);
-      if (dz > 1e-9) tEnd = Math.min(tEnd, (12 - oz) / dz); else if (dz < -1e-9) tEnd = Math.min(tEnd, (-12 - oz) / dz);
-      { const L = Math.min(tEnd, rayHit(walls, ox, oz, dx, dz, EYE)); if (L > best) { best = L; longestBandLine.at = [ox, oz, a]; } }
+      if (dx > 1e-9) tEnd = Math.min(tEnd, (A - ox) / dx); else if (dx < -1e-9) tEnd = Math.min(tEnd, (-A - ox) / dx);
+      if (dz > 1e-9) tEnd = Math.min(tEnd, (A - oz) / dz); else if (dz < -1e-9) tEnd = Math.min(tEnd, (-A - oz) / dz);
+      const L = Math.min(tEnd, rayHit(walls, ox, oz, dx, dz, EYE));
+      if (L > best) { best = L; longestLine.at = [ox, oz, a]; }
     }
   }
   return best;
 }
 
-assert.deepEqual(MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth']);
+assert.deepEqual(MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth', 'necropolis']);
 assert.equal(DEFAULT_MAP, 'olympus');
+assert.deepEqual(TEAM_MAP_IDS, ['olympus', 'foundry', 'frostpeak', 'labyrinth']);
+assert.deepEqual(FFA_MAP_IDS, ['necropolis']);
 
 for (const id of MAP_IDS) {
   const map = MAPS[id];
+  const ARENA = map.size;
+  assert.ok(Number.isFinite(ARENA) && ARENA >= 15 && ARENA <= 60, `${id} size`);
+  assert.equal(typeof map.ffa, 'boolean', `${id} ffa`);
+  assert.ok(map.walls.length <= 130, `${id} too many walls (${map.walls.length})`);
   // keys / types
   assert.equal(map.id, id);
   assert.ok(typeof map.name === 'string' && map.name.length > 0, `${id} name`);
@@ -102,31 +111,48 @@ for (const id of MAP_IDS) {
     assert.ok(map.hazards.some((o) => near(o.x, -h.x) && near(o.z, -h.z) && near(o.r, h.r)), `${id}: hazard at ${h.x},${h.z} has no mirror`);
     assert.ok(Math.abs(h.x) + h.r <= ARENA && Math.abs(h.z) + h.r <= ARENA, `${id} hazard outside arena`);
     for (const w of map.walls) {
+      if (w.kind === 'low') continue; // stepping stones and bridges may sit in lava
       const cx = Math.min(Math.max(h.x, w.minX), w.maxX), cz = Math.min(Math.max(h.z, w.minZ), w.maxZ);
       assert.ok(Math.hypot(h.x - cx, h.z - cz) > h.r + 0.3, `${id} hazard touches a wall`);
     }
   }
-  // shield walls identical to olympus' spawn pocket
-  const shield = map.walls.filter((w) => w.kind === 'shield');
-  assert.equal(shield.length, 6, `${id} shield count`);
-  for (const s of MAPS.olympus.walls.filter((w) => w.kind === 'shield')) {
-    assert.ok(shield.some((w) => near(w.minX, s.minX) && near(w.maxX, s.maxX) && near(w.minZ, s.minZ) && near(w.maxZ, s.maxZ) && near(w.h, s.h)), `${id} spawn pocket differs`);
+  // spawns
+  if (map.ffa) {
+    assert.ok(Array.isArray(map.ffaSpawns) && map.ffaSpawns.length >= 12, `${id} needs >= 12 ffaSpawns`);
+    assert.ok(!map.spawns, `${id} ffa map must not define team spawns`);
+    for (const s of map.ffaSpawns) assert.ok(Number.isFinite(s.x) && Number.isFinite(s.z), `${id} ffa spawn`);
+    for (let i = 0; i < map.ffaSpawns.length; i++) for (let j = i + 1; j < map.ffaSpawns.length; j++) {
+      const a = map.ffaSpawns[i], b = map.ffaSpawns[j];
+      assert.ok(Math.hypot(a.x - b.x, a.z - b.z) >= 12, `${id} ffa spawns ${i},${j} closer than 12 m`);
+    }
+  } else {
+    assert.equal(map.spawns.length, 3, `${id} needs 3 spawns`);
+    assert.ok(!map.ffaSpawns, `${id} team map must not define ffaSpawns`);
+    for (const s of map.spawns) for (const k of ['x', 'z', 'yaw']) assert.ok(Number.isFinite(s[k]), `${id} spawn ${k}`);
+    for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) {
+      assert.ok(Math.hypot(map.spawns[i].x - map.spawns[j].x, map.spawns[i].z - map.spawns[j].z) >= 2.5, `${id} spawn slots ${i},${j} too close`);
+    }
   }
-  // no non-shield wall inside the spawn pockets (|z| > 23.5 and |x| < 10.6+)
-  for (const w of map.walls) if (w.kind !== 'shield') assert.ok(!(Math.abs(w.minZ) > 19 && Math.abs(w.maxZ) > 19 && w.maxX > -11.2 && w.minX < 11.2 && Math.max(Math.abs(w.minZ), Math.abs(w.maxZ)) > 19.5 && Math.min(Math.abs(w.minZ), Math.abs(w.maxZ)) > 19), `${id} wall inside spawn pocket`);
-
-  // spawns: outside walls/hazards (0.5 margin), pairs blocked at eye height
-  for (const n of [2, 3]) for (let t = 0; t < 2; t++) for (let i = 0; i < n; i++) {
-    const s = spawnPoint(t, i, n);
-    for (const w of map.walls) assert.ok(!(s.x > w.minX - 0.5 && s.x < w.maxX + 0.5 && s.z > w.minZ - 0.5 && s.z < w.maxZ + 0.5), `${id} spawn inside a wall`);
+  const pts = startPoints(map);
+  for (const s of pts) {
+    assert.ok(Math.abs(s.x) < ARENA - 0.5 && Math.abs(s.z) < ARENA - 0.5, `${id} spawn outside arena`);
+    for (const w of map.walls) assert.ok(!(s.x > w.minX - 0.5 && s.x < w.maxX + 0.5 && s.z > w.minZ - 0.5 && s.z < w.maxZ + 0.5), `${id} spawn ${s.x},${s.z} inside a wall`);
     for (const h of map.hazards) assert.ok(Math.hypot(s.x - h.x, s.z - h.z) > h.r + 0.5, `${id} spawn in hazard`);
   }
-  for (const n of [2, 3]) for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-    const a = spawnPoint(0, i, n), b = spawnPoint(1, j, n);
-    const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
-    for (const y of [0.3, EYE, 1.9]) {
-      const t = rayHit(map.walls, a.x, a.z, dx / d, dz / d, y, d);
-      assert.ok(t < d - 0.1, `${id}: spawn ${i} sees spawn ${j} at height ${y} (${n}v${n})`);
+  if (!map.ffa) {
+    // team 0 must not see team 1 at round start (low, eye and head height)
+    for (const s of map.spawns) for (const o of map.spawns) {
+      const a = s, b = { x: -o.x, z: -o.z };
+      const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+      for (const y of [0.3, EYE, 1.9]) {
+        const t = rayHit(map.walls, a.x, a.z, dx / d, dz / d, y, d);
+        assert.ok(t < d - 0.1, `${id}: spawn (${a.x},${a.z}) sees (${b.x},${b.z}) at height ${y}`);
+      }
+    }
+    // team spawns face roughly towards the centre of the map
+    for (const s of map.spawns) {
+      const lx = -Math.sin(s.yaw), lz = -Math.cos(s.yaw), len = Math.hypot(s.x, s.z) || 1;
+      assert.ok(lx * (-s.x / len) + lz * (-s.z / len) > 0.5, `${id} spawn (${s.x},${s.z}) yaw does not face the centre`);
     }
   }
   // Minimum gap: for two walls whose extents overlap along one axis, the free gap between them along
@@ -155,17 +181,9 @@ for (const id of MAP_IDS) {
   const r = reachability(map);
   assert.ok(r.pct >= 95, `${id}: only ${r.pct.toFixed(1)}% of free cells reachable`);
   let extra = '';
-  if (id === 'labyrinth') {
-    const L = longestBandLine(map.walls);
-    assert.ok(L <= 16 /* ~14 m target, slack for diagonals through staggered doorways */, `labyrinth has a ${L.toFixed(1)} m sight line in the middle band (origin x,z,angle ${longestBandLine.at})`);
-    extra = ` longest band line ${L.toFixed(1)}m`;
-  }
-  console.log(`${id}: ${map.walls.length} walls, ${map.hazards.length} hazards, ${r.pct.toFixed(1)}% reachable${extra}`);
+  const L = longestLine(map);
+  if (id === 'labyrinth') assert.ok(L <= 14, `labyrinth has a ${L.toFixed(1)} m sight line (origin x,z,angle ${longestLine.at})`);
+  extra = ` longest line ${L.toFixed(1)}m`;
+  console.log(`${id}: size ${ARENA}, ${map.ffa ? 'ffa' : 'team'}, ${map.walls.length} walls, ${map.hazards.length} hazards, ${r.pct.toFixed(1)}% reachable${extra}`);
 }
-
-// olympus must equal the live sim.js layout (set of rounded tuples)
-const key = (w) => [w.minX, w.maxX, w.minZ, w.maxZ, w.h].map((v) => v.toFixed(3)).join(',');
-const a = new Set(MAPS.olympus.walls.map(key)), b = new Set(WALLS.map(key));
-assert.equal(MAPS.olympus.walls.length, WALLS.length, 'olympus wall count');
-assert.deepEqual([...a].sort(), [...b].sort(), 'olympus differs from sim.js WALLS');
 console.log('maps: ok');

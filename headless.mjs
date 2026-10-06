@@ -111,7 +111,7 @@ try {
   assert.equal(end.p.length, 6, 'expected 3v3 = 6 players');
   const meP = end.p.find((p) => !p.b);
   assert.equal(meP.md, 'phantom');
-  assert.equal(meP.mh, 80);
+  assert.equal(meP.mh, 70);
   assert.ok(Array.isArray(end.zn), 'snapshot missing zones');
   assert.equal(end.me.cd.length, 3);
   assert.equal(end.p.filter((p) => !p.b).length, 1, 'expected exactly one human');
@@ -133,6 +133,26 @@ try {
     assert.equal(w.team, 1, 'team choice ignored');
     assert.equal(w.ranked, false);
     w2.close();
+  }
+
+  // ---- free-for-all join: big map, 8 players, never ranked
+  {
+    const w3 = new WebSocket(`ws://localhost:${port}`);
+    const got = [];
+    w3.onmessage = (e) => got.push(JSON.parse(e.data));
+    await new Promise((r, j) => { w3.onopen = r; w3.onerror = j; });
+    w3.send(JSON.stringify({ t: 'join', name: 'FfaTester', mode: 'ffa', map: 'olympus', queue: 'ranked', team: 1, loadout: ['pushback', 'bind', 'dash'], model: 'phantom' }));
+    await new Promise((r) => setTimeout(r, 500));
+    const w = got.find((m) => m.t === 'welcome');
+    assert.ok(w, 'no welcome for ffa');
+    assert.equal(w.mode, 'ffa');
+    assert.equal(w.map, 'necropolis', 'ffa must use an ffa map');
+    assert.equal(w.ranked, false, 'ffa must not be ranked');
+    const snap = got.filter((m) => m.t === 's').pop();
+    assert.equal(snap.p.length, 8);
+    assert.equal(snap.ffa, 1);
+    assert.equal(new Set(snap.p.map((p) => p.tm)).size, 8, 'every ffa player needs their own team id');
+    w3.close();
   }
 
   // ---- accounts + ranked matchmaking

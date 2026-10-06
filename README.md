@@ -6,7 +6,7 @@
 
 1. Install Node.js 18 or newer from https://nodejs.org
 2. In this folder: `node server.js` (no `npm install` needed, there are no dependencies)
-3. Open http://localhost:3000, pick a mode, a map, a team, a champion and three skills, then click QUICK PLAY or RANKED
+3. Open http://localhost:3000, pick a mode, a map, a team, a champion and three skills, then click QUICK PLAY or RANKED (free-for-all has no ranked)
 
 The browser loads Three.js from a CDN (jsDelivr), so it needs internet access.
 
@@ -14,7 +14,16 @@ The browser loads Three.js from a CDN (jsDelivr), so it needs internet access.
 
 - **Quick play**: drops you straight into the fullest open room with the same mode, map and a free slot on your team (or makes one). Bots fill empty slots.
 - **Ranked** (needs an account): searches for another player near your rating (band starts at 250 and widens 60 per second). After 8 seconds without a match, bots fill in. Elo K=32. Leaving a ranked match early counts as a loss.
-- **Maps**: Olympus (marble, balanced), Foundry (lava pit in the middle), Frostpeak (open, sniper pillars), Labyrinth (tight corridors).
+- **Free-for-all**: 8 players on the big Necropolis map (96 m wide), everyone for themselves. Respawn after 3 seconds with 1.5 seconds of spawn protection. First to 20 kills, or the best score after 5 minutes.
+- **Maps** (each has its own size and layout):
+
+| Map | Size | Teams | Feel |
+|---|---|---|---|
+| Temple of Zeus | 60 m | North / south | Balanced marble ruins around a central temple |
+| Hades' Foundry | 40 m | Opposite corners | Small, a lava pit in the middle crossed by narrow bridges |
+| Frostpeak | 84 m | West / east | Huge and open, long sight lines for snipers |
+| Labyrinth | 36 m | North / south | A real maze, short sight lines, close fights |
+| Necropolis | 96 m | Free-for-all | Ruined graveyard city with four districts and lava pits |
 - **Between matches**: after a match ends you get 15 seconds to change champion and skills for the next one.
 
 ## Accounts
@@ -33,7 +42,9 @@ Without them the menu shows a warning that accounts are temporary. Locally you c
 
 Anyone who can reach your server and picks the same mode, map and ranked setting joins the same room. On your home network, share `http://<your-computer-IP>:3000`. Over the internet, host the folder on any Node host (Render, Fly.io, a VPS). Set the port with the `PORT` environment variable.
 
-## Controls (rebindable under CONTROLS in the menu or pause screen)
+## Controls (rebindable under KEYBINDS in the menu or pause screen)
+
+Every action (including Fire and the three skills) can use a keyboard key, any mouse button (left, right, middle, side buttons) or a scroll-wheel notch. The CROSSHAIR button opens the crosshair editor (shape, colour, size, thickness, gap, opacity, outline, centre dot).
 
 | Key | Action |
 |---|---|
@@ -41,34 +52,36 @@ Anyone who can reach your server and picks the same mode, map and ranked setting
 | Space | Jump |
 | C or Shift (hold) | Crouch: half speed, lower view, smaller hitbox, no jumping |
 | Mouse | Aim. Left click shoots, one shot per click (semi-auto) |
+| Wheel | Unbound by default; can be bound to any action |
 | Q / E / R | Your three chosen skills |
 | Esc | Pause menu |
 
-## Models (pick one)
+## Champions (pick one)
 
-| Model | HP | Speed | Notes |
-|---|---|---|---|
-| Striker | 100 | 7 | Balanced |
-| Vanguard | 130 | 6.2 | Tanky, slower |
-| Phantom | 80 | 8 | Fast, fragile |
-| Warden | 105 | 6.8 | Heals 50% more |
+More health always means slower movement. Fewer shots to kill = faster legs.
 
-Each model has its own look in game. Enemy name plates show only while that enemy is visible; allies always show.
+| Champion | Role | Health | Speed | Heal | Dies to (body / head shots) |
+|---|---|---|---|---|---|
+| Vanguard | Tank | 150 | 5.6 | 100% | 7 / 4 |
+| Warden | Support | 115 | 6.4 | 150% | 6 / 3 |
+| Striker | All-rounder | 100 | 7.0 | 100% | 5 / 3 |
+| Phantom | Runner | 70 | 8.6 | 100% | 4 / 2 |
+
+Each champion has its own look in game. Enemy name plates show only while that enemy is visible; allies always show.
 
 ## Skills (pick any three, any model)
 
 | Spell | Cooldown | Effect |
 |---|---|---|
 | Dash | 5s | Burst of speed in your move direction |
-| Shield | 14s | 60% less damage for 2.5s |
+| Shield | 14s | 40% less damage for 2.5s |
 | Heal | 18s | Restore 35 HP |
 | Shockwave | 10s | Aimed shot: pushes the first enemy hit straight back. No damage |
+| Pushback | 10s | Blast around you: shoves every enemy within 7m away from you. No damage |
 | Bind | 11s | Your next rifle shot (6s to use it) roots the enemy it hits for 1.8s |
 | Fire Pool | 14s | Ignite the ground where you aim (3m wide, 5s): burns enemies standing in it |
 | Frost Nova | 12s | 12 damage and 3s slow to enemies within 5m |
-| Incendiary Rounds | 16s | 6s: rifle hits leave fire under the target's feet |
 | Barbed Rounds | 14s | 6s: rifle hits cause bleed (worse while the target moves) |
-| Explosive Rounds | 15s | 6s: rifle hits explode for 14 damage to other enemies within 3m |
 
 Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots. Lava on Foundry burns anyone touching the floor in it.
 
@@ -79,9 +92,9 @@ Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots. Lava on Foundr
 | `index.html` | Menu (account, mode, map, team, champion, skills, controls) and HUD |
 | `main.js` | Client: rendering, prediction/interpolation, input, keybinds, HUD logic |
 | `world.js` | Themed arena visuals per map, player models, menu podium |
-| `maps.js` | Map data: walls, hazards and visual theme for each map |
+| `maps.js` | Map data: size, spawns, walls, hazards and visual theme for each map |
 | `sim.js` | Movement, raycasts, skills/models list. Used by server and client |
-| `game.js` | Room: rounds, hitscan, spells, bot AI |
+| `game.js` | Room: rounds / free-for-all, hitscan, spells, bot AI |
 | `lobby.js` | Quick play placement and ranked queue |
 | `auth.js`, `store.js` | Accounts, sessions, Elo, Upstash/file storage |
 | `server.js`, `ws-lite.js` | HTTP + built-in WebSocket server (60 Hz sim, 30 Hz snapshots) |
@@ -91,5 +104,5 @@ Rifle: 22 body / 45 headshot damage, 100 HP, 0.18s between shots. Lava on Foundr
 
 - Lag compensation rewinds enemies up to 0.4s for shots. Very high ping (over about 400ms) is still unfair.
 - Players do not collide with each other.
-- To add a map, add an entry to `maps.js` (keep walls point-mirrored so teams stay fair).
+- To add a map, add an entry to `maps.js` (keep walls point-mirrored so teams stay fair; `npm test` checks the rules).
 - No leaderboard yet.

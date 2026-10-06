@@ -1,11 +1,10 @@
 // Shared deterministic simulation. Used by the server (authoritative) and the
 // browser client (prediction), so both must stay free of DOM / Node APIs.
 
-export const VERSION = '0.5.0'; // bump on every release; the page warns when main.js and the server differ
+export const VERSION = '0.6.0'; // bump on every release; the page warns when main.js and the server differ
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 
-export const ARENA = 30; // half-extent of the square arena (metres)
 export const PLAYER_R = 0.45;
 export const PLAYER_H = 1.8;
 export const EYE_H = 1.6;
@@ -29,26 +28,26 @@ export const RANGE = 100;
 
 export const SPELLS = {
   dash: { name: 'Dash', cd: 5, desc: 'Burst of speed in your move direction.' },
-  shield: { name: 'Shield', cd: 14, desc: 'Take 60% less damage for 2.5s.' },
+  shield: { name: 'Shield', cd: 14, desc: 'Take 40% less damage for 2.5s.' },
   heal: { name: 'Heal', cd: 18, desc: 'Instantly restore 35 HP.' },
   shockwave: { name: 'Shockwave', cd: 10, desc: 'Aimed shot: pushes the first enemy hit back. No damage.' },
+  pushback: { name: 'Pushback', cd: 10, desc: 'Blast that shoves every enemy within 7m away from you. No damage.' },
   bind: { name: 'Bind', cd: 11, desc: 'Your next rifle shot roots the enemy it hits for 1.8s (6s to use it).' },
   firepool: { name: 'Fire Pool', cd: 14, desc: 'Ignite the ground where you aim: 3m wide, burns enemies for 5s.' },
   nova: { name: 'Frost Nova', cd: 12, desc: 'Blast within 5m: 12 damage and 3s slow on enemies.' },
-  incendiary: { name: 'Incendiary Rounds', cd: 16, desc: '6s: rifle hits leave fire under the target\'s feet.' },
   barbed: { name: 'Barbed Rounds', cd: 14, desc: '6s: rifle hits make the target bleed (worse when moving).' },
-  explosive: { name: 'Explosive Rounds', cd: 15, desc: '6s: rifle hits explode for area damage within 3m.' },
 };
 
 export const SLOT_KEYS = ['Q', 'E', 'R'];
 export const SLOT_COUNT = 3;
 export const DEFAULT_LOADOUT = ['dash', 'heal', 'shield'];
 
+// Champions trade health for speed: the more HP, the slower you move. `role` + `blurb` are shown in the menu.
 export const MODELS = {
-  striker: { name: 'Striker', hp: 100, speed: 7, healMult: 1, desc: 'Balanced. 100 HP, speed 7.' },
-  vanguard: { name: 'Vanguard', hp: 130, speed: 6.2, healMult: 1, desc: 'Tanky but slower. 130 HP, speed 6.2.' },
-  phantom: { name: 'Phantom', hp: 80, speed: 8, healMult: 1, desc: 'Fast and fragile. 80 HP, speed 8.' },
-  warden: { name: 'Warden', hp: 105, speed: 6.8, healMult: 1.5, desc: 'Sturdy. 105 HP, heals 50% more.' },
+  vanguard: { name: 'Vanguard', role: 'Tank', hp: 150, speed: 5.6, healMult: 1, blurb: 'Soaks the most damage but is the easiest to chase down.' },
+  warden: { name: 'Warden', role: 'Support', hp: 115, speed: 6.4, healMult: 1.5, blurb: 'Sturdy and slightly slow. Heal restores 50% more.' },
+  striker: { name: 'Striker', role: 'All-rounder', hp: 100, speed: 7.0, healMult: 1, blurb: 'The baseline: average health, average speed.' },
+  phantom: { name: 'Phantom', role: 'Runner', hp: 70, speed: 8.6, healMult: 1, blurb: 'Fastest by far, but dies in 4 body shots.' },
 };
 export const DEFAULT_MODEL = 'striker';
 
@@ -58,25 +57,38 @@ export const SLOW_FACTOR = 0.55;
 // ---------------------------------------------------------------- map
 // Map layouts live in maps.js. The sim works on ONE "current" map at a time (WALLS / HAZARDS):
 // the server calls useMap(room.mapId) before it steps a room, the browser calls it once on join.
-import { MAPS, MAP_IDS, DEFAULT_MAP } from './maps.js';
-export { MAPS, MAP_IDS, DEFAULT_MAP };
+import { MAPS, MAP_IDS, DEFAULT_MAP, TEAM_MAP_IDS, FFA_MAP_IDS } from './maps.js';
+export { MAPS, MAP_IDS, DEFAULT_MAP, TEAM_MAP_IDS, FFA_MAP_IDS };
 export const SHIELD_WALL_H = 3.5;
 export let WALLS = MAPS[DEFAULT_MAP].walls;
 export let HAZARDS = MAPS[DEFAULT_MAP].hazards;
+export let ARENA = MAPS[DEFAULT_MAP].size; // half-extent of the current map's square arena (metres)
 let curMap = DEFAULT_MAP;
+let curDef = MAPS[DEFAULT_MAP];
 export function useMap(id) {
   if (id === curMap) return;
   const m = MAPS[id] || MAPS[DEFAULT_MAP];
   curMap = MAPS[id] ? id : DEFAULT_MAP;
   WALLS = m.walls;
   HAZARDS = m.hazards;
+  ARENA = m.size;
+  curDef = m;
 }
 
-export function spawnPoint(team, slot, size) {
-  const x = (slot - (size - 1) / 2) * 4;
-  const z = team === 0 ? -(ARENA - 4) : ARENA - 4;
-  return { x, z, yaw: team === 0 ? Math.PI : 0 };
+/** Team spawn for the current map (team 1 is team 0 rotated 180 degrees). */
+export function spawnPoint(team, slot) {
+  const list = curDef.spawns || [{ x: 0, z: 0, yaw: 0 }];
+  const s = list[slot % list.length];
+  return team === 0 ? { x: s.x, z: s.z, yaw: s.yaw } : { x: -s.x, z: -s.z, yaw: s.yaw + Math.PI };
 }
+
+/** Free-for-all spawn points of the current map (index wraps). */
+export function ffaSpawn(i) {
+  const list = curDef.ffaSpawns || [{ x: 0, z: 0 }];
+  const s = list[i % list.length];
+  return { x: s.x, z: s.z };
+}
+export const ffaSpawnCount = () => (curDef.ffaSpawns || []).length || 1;
 
 // ---------------------------------------------------------------- movement
 function floorAt(x, z, y) {

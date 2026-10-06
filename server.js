@@ -7,7 +7,7 @@ import { Lobby } from './lobby.js';
 import { attachWebSocket } from './ws-lite.js';
 import { createStore } from './store.js';
 import { createAuth, makeLimiter, eloDelta, publicProfile, rankFor } from './auth.js';
-import { DT, SPELLS, MODELS, MAPS, DEFAULT_MAP, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT, VERSION } from './sim.js';
+import { DT, SPELLS, MODELS, MAPS, TEAM_MAP_IDS, FFA_MAP_IDS, DEFAULT_MAP, DEFAULT_MODEL, SLOT_COUNT, DEFAULT_LOADOUT, VERSION } from './sim.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -166,10 +166,13 @@ const send = (ws, obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)
 
 async function handleJoin(ws, m) {
   if (ws.player || ws.ticket) return;
-  const mode = m.mode === 3 ? 3 : 2;
-  const map = Object.hasOwn(MAPS, m.map) ? m.map : DEFAULT_MAP;
-  const ranked = m.queue === 'ranked';
-  const team = m.team === 0 || m.team === 1 ? m.team : -1;
+  const ffa = m.mode === 'ffa';
+  const mode = ffa ? 'ffa' : m.mode === 3 ? 3 : 2;
+  // team modes use team maps, free-for-all uses the big deathmatch map(s)
+  const allowed = ffa ? FFA_MAP_IDS : TEAM_MAP_IDS;
+  const map = typeof m.map === 'string' && allowed.includes(m.map) ? m.map : allowed[0];
+  const ranked = !ffa && m.queue === 'ranked'; // no ranked free-for-all
+  const team = !ffa && (m.team === 0 || m.team === 1) ? m.team : -1;
   let user = null;
   if (typeof m.token === 'string' && m.token) {
     try { user = await auth.userFromToken(m.token); } catch { user = null; }

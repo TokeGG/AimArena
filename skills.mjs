@@ -73,22 +73,44 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   assert.ok(st.x > -28 + 1, 'player should move again after the root ends');
 }
 
-// ---- Incendiary Rounds: fire zone under the target + burning damage
+// ---- Pushback: radial shove away from the caster within 7m, no damage, nobody farther is moved
 {
-  const { room, shooter, enemy } = setup(['incendiary', 'dash', 'heal']);
+  const { room, shooter, enemy, extra } = setup(['pushback', 'dash', 'heal']);
+  enemy.x = -15; enemy.z = 24;         // 4 m from the caster: in range
+  extra.x = -4; extra.z = 28;          // 11 m away: out of range
+  const hp0 = enemy.hp, ehp = extra.hp;
   act(room, shooter, [enemy.x, 1.0, enemy.z], { q: true });
-  assert.ok(shooter.fireBuffT > 5, 'buff not active');
-  act(room, shooter, [enemy.x, 1.0, enemy.z], { shoot: true });
-  assert.equal(room.zones.length, 1, 'no fire zone created');
-  assert.ok(Math.hypot(room.zones[0].x - enemy.x, room.zones[0].z - enemy.z) < 0.01, 'zone not under target');
-  assert.ok(enemy.burnT > 0, 'target not burning');
-  const hp0 = enemy.hp;
-  idle(room, 60);
-  assert.ok(hp0 - enemy.hp > 10, `burn did too little damage (${hp0 - enemy.hp})`);
-  const snap = room.snapshot();
-  assert.ok(snap.zn.length >= 1 && snap.p.some((p) => p.sf & 4), 'snapshot missing zone or burn flag');
-  // allies of the caster are not burned
-  assert.equal(shooter.burnT, 0);
+  assert.equal(enemy.hp, hp0, 'pushback must not deal damage');
+  assert.ok(enemy.dashT > 0, 'enemy in range was not pushed');
+  const away = (enemy.dvx * (enemy.x - shooter.x) + enemy.dvz * (enemy.z - shooter.z));
+  assert.ok(away > 0, 'push should point away from the caster');
+  assert.equal(extra.dashT, 0, 'enemy out of range was pushed');
+  assert.equal(extra.hp, ehp);
+  assert.equal(shooter.dashT, 0, 'caster must not push itself');
+}
+
+// ---- Shield: 40% less damage
+{
+  const { room, shooter, enemy } = setup(['shield', 'dash', 'heal']);
+  const a = enemy.hp;
+  room.damage(enemy, 20, shooter, false);
+  assert.equal(a - enemy.hp, 20);
+  const b = setup(['shield', 'dash', 'heal']);
+  b.enemy.shieldT = 2;
+  const h = b.enemy.hp;
+  b.room.damage(b.enemy, 20, b.shooter, false);
+  assert.ok(Math.abs((h - b.enemy.hp) - 12) < 1e-9, `shield should take 40% off, got ${h - b.enemy.hp}`);
+}
+
+// ---- Champions: more health always means slower, and the gaps are big
+{
+  const list = Object.values(MODELS).sort((x, y) => x.hp - y.hp);
+  for (let i = 1; i < list.length; i++) {
+    assert.ok(list[i].speed < list[i - 1].speed, `${list[i].name} has more HP than ${list[i - 1].name} but is not slower`);
+    assert.ok(list[i].hp - list[i - 1].hp >= 10, 'HP steps too small');
+    assert.ok(list[i - 1].speed - list[i].speed >= 0.5, 'speed steps too small');
+  }
+  assert.ok(list[list.length - 1].hp >= 1.8 * list[0].hp, 'tank vs runner HP spread too small');
 }
 
 // ---- Barbed Rounds: bleed, worse while moving
@@ -111,21 +133,6 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   const lostMoving = h1 - moving.enemy.hp;
   assert.ok(lostStill > 3, `bleed too weak (${lostStill})`);
   assert.ok(lostMoving > lostStill * 1.4, `moving bleed (${lostMoving}) should exceed standing bleed (${lostStill})`);
-}
-
-// ---- Explosive Rounds: AoE hits a second enemy within 3m, not one farther away
-{
-  const { room, shooter, enemy, extra } = setup(['explosive', 'dash', 'heal']);
-  act(room, shooter, [enemy.x, 1.0, enemy.z], { q: true });
-  const e0 = extra.hp;
-  act(room, shooter, [enemy.x, 1.0, enemy.z], { shoot: true });
-  assert.ok(extra.hp < e0, 'nearby enemy took no splash damage');
-  const far = setup(['explosive', 'dash', 'heal']);
-  far.extra.x = -5;
-  act(far.room, far.shooter, [far.enemy.x, 1.0, far.enemy.z], { q: true });
-  const f0 = far.extra.hp;
-  act(far.room, far.shooter, [far.enemy.x, 1.0, far.enemy.z], { shoot: true });
-  assert.equal(far.extra.hp, f0, 'distant enemy took splash damage');
 }
 
 // ---- Fire Pool: ground zone where aimed, burns enemies standing in it
@@ -227,7 +234,6 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   const p = room.players.find((q) => q.team === 0);
   const foe = room.players.find((q) => q.team === 1);
   for (const o of room.players) { o.isBot = false; if (o !== p && o !== foe) o.alive = false; }
-  foe.x = -20; foe.z = 25;
   room.phase = 'live'; room.phaseT = 0; room.roundT = 999;
   p.x = 1; p.z = 1; p.y = 0;
   const hp0 = p.hp;
@@ -238,9 +244,8 @@ const idle = (room, n) => { for (let i = 0; i < n; i++) room.step(); };
   const r = q.players.find((x) => x.team === 0);
   const foe2 = q.players.find((x) => x.team === 1);
   for (const o of q.players) { o.isBot = false; if (o !== r && o !== foe2) o.alive = false; }
-  foe2.x = 20; foe2.z = 25;
   q.phase = 'live'; q.phaseT = 0; q.roundT = 999;
-  r.x = -20; r.z = 20; r.y = 0; const h1 = r.hp;
+  const h1 = r.hp; // stays on its own spawn, far from the pit
   idle(q, 60);
   assert.equal(r.hp, h1, 'player away from the pit lost HP');
 }

@@ -1,7 +1,7 @@
 // Visual themes for every arena (see maps.js for the theme data): night sky, dark stone, gold trim, torch light.
 // Everything here is decoration; collision comes from the map's walls in maps.js.
 import * as THREE from 'three';
-import { ARENA, MAPS, DEFAULT_MAP } from './sim.js';
+import { MAPS, DEFAULT_MAP } from './sim.js';
 
 export const TEAM_COLOR = [0x3b82ff, 0xff5436];
 const css = (hex) => `#${hex.toString(16).padStart(6, '0')}`;
@@ -55,15 +55,16 @@ function skyTexture(t) {
   });
 }
 
-function floorTexture(t) {
-  const S = 1024, k = S / (ARENA * 2);
+function floorTexture(t, map) {
+  const size = map.size, TILES = Math.round(size / 2); // 4 m slabs
+  const S = 1024, k = S / (size * 2);
   return canvasTexture(S, S, (g) => {
     g.fillStyle = t.floor;
     g.fillRect(0, 0, S, S);
     // checker tint + speckle so the floor reads as stone slabs
     const tile = 4 * k;
-    for (let iz = 0; iz < 15; iz++) {
-      for (let ix = 0; ix < 15; ix++) {
+    for (let iz = 0; iz < TILES; iz++) {
+      for (let ix = 0; ix < TILES; ix++) {
         if ((ix + iz) % 2 === 0) { g.fillStyle = t.floorTint; g.fillRect(ix * tile, iz * tile, tile, tile); }
       }
     }
@@ -73,26 +74,30 @@ function floorTexture(t) {
     }
     g.strokeStyle = t.floorLine;
     g.lineWidth = 2;
-    for (let i = 0; i <= 15; i++) {
+    for (let i = 0; i <= TILES; i++) {
       g.beginPath(); g.moveTo(i * tile, 0); g.lineTo(i * tile, S); g.moveTo(0, i * tile); g.lineTo(S, i * tile); g.stroke();
     }
-    // spawn pockets (canvas y = world z + 30): team 0 (blue) at z < 0, team 1 (red) at z > 0
-    const pocket = (z0, z1, rgba) => {
+    // spawn areas: a tinted disc under every team spawn (blue = team 0, red = team 1), or small marks for FFA spawns
+    const spot = (x, z, r, rgba) => {
       g.fillStyle = rgba;
-      g.fillRect((-10.6 + ARENA) * k, (z0 + ARENA) * k, 21.2 * k, (z1 - z0) * k);
+      g.beginPath(); g.arc((x + size) * k, (z + size) * k, r * k, 0, Math.PI * 2); g.fill();
     };
-    pocket(-30, -19.5, 'rgba(59,130,255,.38)');
-    pocket(19.5, 30, 'rgba(255,84,54,.38)');
+    for (const sp of map.spawns || []) {
+      spot(sp.x, sp.z, 3.2, 'rgba(59,130,255,.34)');
+      spot(-sp.x, -sp.z, 3.2, 'rgba(255,84,54,.34)');
+    }
+    for (const sp of map.ffaSpawns || []) spot(sp.x, sp.z, 1.6, 'rgba(212,167,58,.22)');
     // centre emblem: gold rings + sun rays
     g.save();
     g.translate(S / 2, S / 2);
+    const ek = Math.min(1, size / 30);
     g.strokeStyle = css(mix(t.accent, 0x000000, 0.2));
     g.lineWidth = 7;
-    for (const r of [10.5, 8.2]) { g.beginPath(); g.arc(0, 0, r * k, 0, Math.PI * 2); g.stroke(); }
+    for (const r of [10.5 * ek, 8.2 * ek]) { g.beginPath(); g.arc(0, 0, r * k, 0, Math.PI * 2); g.stroke(); }
     g.lineWidth = 4;
     for (let i = 0; i < 24; i++) {
       const a = (i / 24) * Math.PI * 2;
-      g.beginPath(); g.moveTo(Math.cos(a) * 8.6 * k, Math.sin(a) * 8.6 * k); g.lineTo(Math.cos(a) * 10.1 * k, Math.sin(a) * 10.1 * k); g.stroke();
+      g.beginPath(); g.moveTo(Math.cos(a) * 8.6 * ek * k, Math.sin(a) * 8.6 * ek * k); g.lineTo(Math.cos(a) * 10.1 * ek * k, Math.sin(a) * 10.1 * ek * k); g.stroke();
     }
     g.restore();
     // darker edge so the arena sits inside its walls
@@ -215,6 +220,7 @@ function column(parent, w, d, h, x, z, material = MARBLE) {
   box(parent, w + 0.55, 0.45, d + 0.55, x, h - 0.225, z, MARBLE_DARK); // capital
 }
 
+let teamOfWall = () => 0;
 function buildWallMesh(scene, w) {
   const sx = w.maxX - w.minX, sz = w.maxZ - w.minZ;
   const cx = (w.minX + w.maxX) / 2, cz = (w.minZ + w.maxZ) / 2;
@@ -229,12 +235,12 @@ function buildWallMesh(scene, w) {
   if (w.kind === 'shield') {
     const long = Math.max(sx, sz);
     const alongX = sx >= sz;
-    const team = cz < 0 ? 0 : 1;
+    const team = teamOfWall(cx, cz);
     box(scene, sx + 0.2, 0.3, sz + 0.2, cx, 0.15, cz, MARBLE_DARK);
     box(scene, sx, w.h - 0.3, sz, cx, 0.3 + (w.h - 0.3) / 2, cz, MARBLE);
     box(scene, sx + 0.25, 0.25, sz + 0.25, cx, w.h + 0.125, cz, GOLD_MAT);
     // team colour stripe on both faces
-    const stripe = new THREE.MeshBasicMaterial({ color: TEAM_COLOR[team] });
+    const stripe = new THREE.MeshBasicMaterial({ color: team < 0 ? 0xd4a73a : TEAM_COLOR[team] });
     if (alongX) { for (const s of [-1, 1]) box(scene, sx - 0.4, 0.45, 0.06, cx, w.h - 0.7, cz + s * (sz / 2 + 0.03), stripe, false); }
     else { for (const s of [-1, 1]) box(scene, 0.06, 0.45, sz - 0.4, cx + s * (sx / 2 + 0.03), w.h - 0.7, cz, stripe, false); }
     // pilasters
@@ -262,13 +268,19 @@ function buildWallMesh(scene, w) {
 export function buildWorld(parent, mapId = DEFAULT_MAP) {
   const map = MAPS[mapId] || MAPS[DEFAULT_MAP];
   const T0 = map.theme;
+  const ARENA = map.size; // half-extent of THIS map
+  const bk = Math.max(1, ARENA / 30); // scale factor for lights, fog and shadows on big maps
   applyTheme(T0);
+  if (map.spawns) {
+    const ax = map.spawns.reduce((a, q) => a + q.x, 0), az = map.spawns.reduce((a, q) => a + q.z, 0);
+    teamOfWall = (x, z) => (x * ax + z * az > 0 ? 0 : 1);
+  } else teamOfWall = () => -1;
   flames.length = 0; torchLights.length = 0;
   const scene = new THREE.Group(); // everything we build lives in here so a different arena can replace it
   parent.add(scene);
   batchScene = scene;
   parent.background = new THREE.Color(T0.haze);
-  parent.fog = new THREE.Fog(T0.haze, 45, 170);
+  parent.fog = new THREE.Fog(T0.haze, 45 * bk, 170 * bk);
 
   // sky dome follows the camera
   const sky = new THREE.Mesh(
@@ -288,17 +300,18 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
   const hemi = new THREE.HemisphereLight(T0.hemi[0], T0.hemi[1], T0.hemi[2]);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(T0.moon[0], T0.moon[1]);
-  sun.position.set(-40, 48, -55);
-  sun.shadow.camera.left = -50; sun.shadow.camera.right = 50;
-  sun.shadow.camera.top = 50; sun.shadow.camera.bottom = -50;
-  sun.shadow.camera.near = 5; sun.shadow.camera.far = 160;
+  sun.position.set(-40 * bk, 48 * bk, -55 * bk);
+  const sh = ARENA * 1.2 + 6;
+  sun.shadow.camera.left = -sh; sun.shadow.camera.right = sh;
+  sun.shadow.camera.top = sh; sun.shadow.camera.bottom = -sh;
+  sun.shadow.camera.near = 5; sun.shadow.camera.far = 170 * bk + 40;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.04;
   sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun);
 
   // floor
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: floorTexture(T0), roughness: 0.92 }));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ map: floorTexture(T0, map), roughness: 0.92 }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
@@ -328,24 +341,37 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
     }
   }
   flushBatches(scene);
-  // team banners on the back walls
-  for (const team of [0, 1]) {
-    const tex = bannerTexture(TEAM_COLOR[team]);
-    const b = new THREE.Mesh(new THREE.PlaneGeometry(5, 8.5), new THREE.MeshBasicMaterial({ map: tex, color: 0xb0b0b8, side: THREE.DoubleSide }));
-    b.position.set(0, 4.9, team === 0 ? -ARENA + 0.1 : ARENA - 0.1);
-    if (team === 0) b.rotation.y = 0; else b.rotation.y = Math.PI;
-    scene.add(b);
+  // team banners on the wall behind each team's spawn (none in free-for-all)
+  if (map.spawns) {
+    const cx = map.spawns.reduce((a, q) => a + q.x, 0) / map.spawns.length;
+    const cz = map.spawns.reduce((a, q) => a + q.z, 0) / map.spawns.length;
+    for (const team of [0, 1]) {
+      const sgn = team === 0 ? 1 : -1;
+      const bx = cx * sgn, bz = cz * sgn;
+      const onZ = Math.abs(bz) >= Math.abs(bx);
+      const tex = bannerTexture(TEAM_COLOR[team]);
+      const b = new THREE.Mesh(new THREE.PlaneGeometry(5, 8.5), new THREE.MeshBasicMaterial({ map: tex, color: 0xb0b0b8, side: THREE.DoubleSide }));
+      if (onZ) { b.position.set(bx, 4.9, Math.sign(bz) * (ARENA - 0.1)); b.rotation.y = bz < 0 ? 0 : Math.PI; }
+      else { b.position.set(Math.sign(bx) * (ARENA - 0.1), 4.9, bz); b.rotation.y = bx < 0 ? Math.PI / 2 : -Math.PI / 2; }
+      scene.add(b);
+    }
   }
 
-  // torches: spawn pocket corners + mid-wall braziers
+  // torches: decorative braziers around the walls, and (costly) real lights on only four of them
   const clear = (x, z) => !map.walls.some((w) => x > w.minX - 0.9 && x < w.maxX + 0.9 && z > w.minZ - 0.9 && z < w.maxZ + 0.9)
     && !(map.hazards || []).some((h) => Math.hypot(x - h.x, z - h.z) < h.r + 1.2);
-  for (const [x, z] of [[9.2, -29], [-9.2, -29], [9.2, 29], [-9.2, 29]]) if (clear(x, z)) torch(scene, x, z);
-  for (const [x, z] of [[-29, 0], [29, 0], [0, -17.6], [0, 17.6]]) if (clear(x, z)) torch(scene, x, z, 1.25, true);
+  const edge = ARENA - 1.4;
+  const q = ARENA * 0.45;
+  const deco = [[q, -edge], [-q, -edge], [q, edge], [-q, edge]];
+  if (ARENA >= 40) deco.push([-edge, q], [-edge, -q], [edge, q], [edge, -q]); // big maps: a few more so the walls are not bare
+  for (const [x, z] of deco) if (clear(x, z)) torch(scene, x, z);
+  for (const [x, z] of [[-edge, 0], [edge, 0], [0, -edge], [0, edge]]) if (clear(x, z)) torch(scene, x, z, 1.25, true);
 
   // hazards (lava pits): glowing animated disc, dark rim stones and flames
   const lava = [];
+  const bigHaz = [...(map.hazards || [])].sort((a, b) => b.r - a.r).slice(0, 2); // only the two biggest pits get a real light
   for (const h of map.hazards || []) {
+    h.lit = bigHaz.includes(h);
     const lm = new THREE.MeshBasicMaterial({ color: 0xff4a10 });
     const disc = new THREE.Mesh(new THREE.CircleGeometry(h.r, 48), lm);
     disc.rotation.x = -Math.PI / 2; disc.position.set(h.x, 0.04, h.z);
@@ -362,10 +388,12 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
       scene.add(f);
       flames.push(f);
     }
-    const glow = new THREE.PointLight(0xff5a1a, 90, 26, 2);
-    glow.position.set(h.x, 2.2, h.z);
-    scene.add(glow);
-    torchLights.push(glow);
+    if (h.lit) {
+      const glow = new THREE.PointLight(0xff5a1a, 90, 26, 2);
+      glow.position.set(h.x, 2.2, h.z);
+      scene.add(glow);
+      torchLights.push(glow);
+    }
   }
 
   // distant mountains (hazy silhouettes)
@@ -430,7 +458,9 @@ export function buildWorld(parent, mapId = DEFAULT_MAP) {
 // ------------------------------------------------------------------ menu showroom
 // A podium just outside the arena wall; the menu camera looks at it with the arena wall behind.
 export const SHOWROOM = { x: 0, z: 46, y: 0.4 };
-export function buildShowroom(scene) {
+export function buildShowroom(parent) {
+  const scene = new THREE.Group(); // the whole podium lives in one group so it can be hidden during matches
+  parent.add(scene);
   const g = new THREE.Group();
   g.position.set(SHOWROOM.x, 0, SHOWROOM.z);
   const step = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 3.2, 0.16, 40), SAND);
@@ -446,7 +476,7 @@ export function buildShowroom(scene) {
   scene.add(g);
   torch(scene, SHOWROOM.x - 3.6, SHOWROOM.z + 1.5, 1.4);
   torch(scene, SHOWROOM.x + 3.6, SHOWROOM.z + 1.5, 1.4);
-  return g;
+  return scene;
 }
 
 // ------------------------------------------------------------------ player models
