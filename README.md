@@ -77,6 +77,8 @@ Everyone has the same stats: 150 health, speed 7.0, normal heal. Shots to kill: 
 
 The main menu is one compact screen: name, mode and team, then four tiles (Map, Skills, Character, Options) that each open their own page, then Watch live / Leaderboard / Profile / Daily / Practice / Admin and the play buttons.
 
+**Bots** (next to Team): Easy, Normal, Hard or Insane. It sets how well the bots in your match aim and how fast they react. Players who pick different levels are put in different rooms. Ranked always uses Normal.
+
 Menu > Character (Customize) changes how you look: body style (Striker, Vanguard, Phantom, Warden), helmet (8), shoulders (6), back piece (7), material (8), kill effect (8), plus primary, secondary and glow colours (presets or any colour). Randomize and Reset are there too. Your look is saved in your browser and everyone in the match sees it. Team colour still shows on a glowing band so you can tell sides apart. Fast graphics lowers character detail.
 
 Maps use generated textures (marble, forged metal, ice, brick, crypt stone) with per-theme details such as snow caps, ember strips and moss. Enemy name plates show only while that enemy is visible; allies always show.

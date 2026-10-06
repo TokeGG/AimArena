@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Room } from './game.js';
+import { Room, BOT_LEVEL_IDS } from './game.js';
 import { Lobby } from './lobby.js';
 import { attachWebSocket } from './ws-lite.js';
 import { createStore } from './store.js';
@@ -259,7 +259,7 @@ function onFlag(room, p, kind, detail, sev) {
   if (sev === 'kick' && ws) { send(ws, { t: 'error', msg: 'Disconnected: unusual network behaviour.' }); setTimeout(() => ws.terminate(), 50); }
 }
 let nextRid = 1;
-const lobby = new Lobby((mode, mapId, ranked) => { const r = new Room(mode, mapId, { ranked, onMatchEnd, onForfeit, onStats, onLeave, onFlag, onRivalKill }); r.rid = nextRid++; return r; });
+const lobby = new Lobby((mode, mapId, ranked, bots) => { const r = new Room(mode, mapId, { ranked, bots, onMatchEnd, onForfeit, onStats, onLeave, onFlag, onRivalKill }); r.rid = nextRid++; return r; });
 const rooms = lobby.rooms;
 const sockets = new Set();
 const onlineCount = () => [...sockets].filter((w) => w.player).length;
@@ -291,6 +291,7 @@ async function handleJoin(ws, m) {
   const allowed = ffa ? FFA_MAP_IDS : TEAM_MAP_IDS;
   const map = isRange ? 'range' : typeof m.map === 'string' && allowed.includes(m.map) ? m.map : allowed[0];
   const ranked = !ffa && m.queue === 'ranked'; // no ranked free-for-all
+  const bots = !ranked && BOT_LEVEL_IDS.includes(m.bots) ? m.bots : 'normal';
   const team = !ffa && (m.team === 0 || m.team === 1) ? m.team : -1;
   let user = null;
   if (typeof m.token === 'string' && m.token) {
@@ -313,7 +314,7 @@ async function handleJoin(ws, m) {
   const rating = user ? user.rating : 1000;
 
   const ticket = {
-    mode, map, ranked, team, rating, since: 0,
+    mode, map, ranked, team, rating, since: 0, bots,
     place(room) {
       const p = room.addHuman(ws, name, loadout, model, { team, look, uid: user ? user.username : null, rating });
       if (p) { p.xp = user ? user.xp || 0 : 0; p.rivals = user && user.rivals ? JSON.parse(JSON.stringify(user.rivals)) : {}; p.rvDelta = {}; }

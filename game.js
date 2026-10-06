@@ -95,7 +95,12 @@ function clearStatuses(p) {
   p.bleedBuffT = 0; p.bindBuffT = 0; p.invulnT = 0; p.markT = 0; p.markTeam = -9; p.overT = 0; p.polyT = 0;
 }
 
-function makePlayer(team, slot, isBot, name) {
+/** Bot difficulty: aim skill range per level (1 = perfect aim and fastest reactions). */
+export const BOT_LEVELS = { easy: [0.2, 0.4], normal: [0.55, 0.85], hard: [0.86, 0.96], insane: [0.985, 1] };
+export const BOT_LEVEL_IDS = Object.keys(BOT_LEVELS);
+const botSkill = (level) => { const r = BOT_LEVELS[level] || BOT_LEVELS.normal; return rand(r[0], r[1]); };
+
+function makePlayer(team, slot, isBot, name, level = 'normal') {
   const p = {
     id: nextId++, team, slot, isBot, ws: null, name,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, dvx: 0, dvz: 0, dashT: 0,
@@ -106,7 +111,7 @@ function makePlayer(team, slot, isBot, name) {
     lastSeq: 0, lastQueued: 0, queue: [], lastInput: NEUTRAL(),
     kills: 0, deaths: 0, lastHurt: -99, respawnT: 0, invulnT: 0,
     hist: [], // recent positions {n,x,y,z} for lag compensation
-    ai: newAI(), skill: rand(0.55, 0.85),
+    ai: newAI(), skill: botSkill(level),
   };
   clearStatuses(p);
   if (isBot) { p.look = randomLook(); applyModel(p, p.look.model); }
@@ -118,6 +123,7 @@ export class Room {
     this.mode = mode;
     this.mapId = MAPS[mapId] ? mapId : DEFAULT_MAP;
     this.ranked = !!opts.ranked;
+    this.botLevel = !opts.ranked && BOT_LEVELS[opts.bots] ? opts.bots : 'normal'; // ranked always uses normal bots
     this.onMatchEnd = opts.onMatchEnd || null; // (room, winnerTeam) when a ranked match ends
     this.onLeave = opts.onLeave || null;       // (room, player) just before a human is replaced by a bot
     this.onStats = opts.onStats || null;       // (room, winnerTeam) at the end of every match (account stats / XP)
@@ -146,11 +152,11 @@ export class Room {
     this.specs = new Set(); // spectator sockets (watch only, no player)
     if (this.ffa) {
       // free-for-all: every player is their own team (team === slot), so "enemy" simply means "someone else"
-      for (let i = 0; i < this.size; i++) this.players.push(makePlayer(i, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length]));
+      for (let i = 0; i < this.size; i++) this.players.push(makePlayer(i, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length], this.botLevel));
     } else {
       for (const team of [0, 1]) {
         for (let i = 0; i < this.size; i++) {
-          this.players.push(makePlayer(team, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length]));
+          this.players.push(makePlayer(team, i, true, BOT_NAMES[botNameIdx++ % BOT_NAMES.length], this.botLevel));
         }
       }
     }
@@ -228,6 +234,7 @@ export class Room {
     p.ws = null;
     p.name = BOT_NAMES[botNameIdx++ % BOT_NAMES.length];
     p.ai = newAI();
+    p.skill = botSkill(this.botLevel);
     p.queue = [];
   }
 
@@ -1146,7 +1153,7 @@ function botThink(room, p, dt) {
       ai.bursting = !ai.bursting;
       ai.burstT = ai.bursting ? rand(0.6, 1.1) : rand(0.25, 0.65);
     }
-    inp.shoot = ai.bursting && ai.seenT > 0.25 + (1 - skill) * 0.4 && aimed;
+    inp.shoot = ai.bursting && ai.seenT > 0.15 + (1 - skill) * 0.5 && aimed;
   } else {
     // Chase: head for the target, steer around walls.
     if (moved < 0.03) ai.stuckT += dt; else ai.stuckT = Math.max(0, ai.stuckT - dt);

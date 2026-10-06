@@ -7,7 +7,7 @@ export const BAND_START = 250;     // allowed rating gap at the start of a searc
 export const BAND_GROW = 60;       // ... plus this much per second waited
 
 export class Lobby {
-  /** createRoom(mode, mapId, ranked) -> Room.  now() -> ms (injectable for tests). */
+  /** createRoom(mode, mapId, ranked, bots) -> Room.  now() -> ms (injectable for tests). */
   constructor(createRoom, now = () => Date.now()) {
     this.createRoom = createRoom;
     this.now = now;
@@ -20,6 +20,7 @@ export class Lobby {
 
   fits(room, t) {
     if (room.mode !== t.mode || room.mapId !== t.map || room.ranked !== t.ranked) return false;
+    if ((room.botLevel || 'normal') !== (t.bots || 'normal')) return false; // players who picked different bot levels don't share a room
     if (room.emptyT > 10) return false;
     const open = room.openSlots();
     if (t.team === 0 || t.team === 1) { if (open[t.team] < 1) return false; } else if (open[0] + open[1] < 1) return false;
@@ -48,7 +49,7 @@ export class Lobby {
   }
 
   make(t) {
-    const room = this.createRoom(t.mode, t.map, t.ranked);
+    const room = this.createRoom(t.mode, t.map, t.ranked, t.bots);
     this.rooms.push(room);
     return room;
   }

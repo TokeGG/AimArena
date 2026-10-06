@@ -7,7 +7,7 @@ import { buildRifle } from '/weapon.js';
 import { TEAM_COLOR, buildWorld, buildShowroom, placeShowroom, buildModel, lookKey, setCharacterDetail, SHOWROOM } from '/world.js';
 
 // Must match VERSION in sim.js and what the server reports at /version. If someone uploads only some files, the menu warns.
-const CLIENT_VERSION = '0.8.7';
+const CLIENT_VERSION = '0.8.8';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -30,7 +30,9 @@ const cfg = {
   map: store.get('map', DEFAULT_MAP),     // last team map
   ffaMap: store.get('ffaMap', FFA_MAP_IDS[0]), // last free-for-all map
   team: store.get('team', -1),
+  bots: store.get('bots', 'normal'),      // bot difficulty: easy / normal / hard / insane
 };
+if (!['easy', 'normal', 'hard', 'insane'].includes(cfg.bots)) cfg.bots = 'normal';
 if (!Array.isArray(cfg.loadout) || cfg.loadout.length > SLOT_COUNT || !cfg.loadout.every((s) => SPELLS[s]) || loadoutCost(cfg.loadout) > LOADOUT_BUDGET) cfg.loadout = [...DEFAULT_LOADOUT];
 if (cfg.quality !== 'low') cfg.quality = 'high';
 if (!TEAM_MAP_IDS.includes(cfg.map)) cfg.map = DEFAULT_MAP;
@@ -529,6 +531,8 @@ function renderMenu() {
   $('mffa').classList.toggle('on', isFfaMode());
   $('ffa-note').classList.toggle('hidden', !isFfaMode());
   $('teamblock').classList.toggle('hidden', isFfaMode());
+  $('botlvl').value = cfg.bots;
+  $('botlvl').disabled = false;
   $('qh').classList.toggle('on', cfg.quality === 'high');
   $('ql').classList.toggle('on', cfg.quality === 'low');
   $('sens').value = cfg.sens;
@@ -562,6 +566,7 @@ function renderMenu() {
   setRankedSub();
   $('quick').firstChild.textContent = ready ? 'QUICK PLAY' : `PICK ${SLOT_COUNT - cfg.loadout.length} MORE SKILL${SLOT_COUNT - cfg.loadout.length > 1 ? 'S' : ''}`;
 }
+$('botlvl').onchange = (e) => { cfg.bots = e.target.value; store.set('bots', cfg.bots); renderMenu(); };
 $('m2').onclick = () => { cfg.mode = 2; renderMenu(); };
 $('m3').onclick = () => { cfg.mode = 3; renderMenu(); };
 $('mffa').onclick = () => { cfg.mode = 'ffa'; renderMenu(); };
@@ -1041,7 +1046,7 @@ let ranked = false, meModel = cfg.look.model, ratingMsg = '', myRating = null;
 function connect(queue) {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
   ws.onopen = () => {
-    ws.send(JSON.stringify({ t: 'join', name: cfg.name, mode: queue === 'range' ? 'range' : cfg.mode, map: chosenMap(), queue, team: cfg.team, loadout: cfg.loadout, model: cfg.look.model, look: effLook(), token }));
+    ws.send(JSON.stringify({ t: 'join', name: cfg.name, mode: queue === 'range' ? 'range' : cfg.mode, map: chosenMap(), queue, team: cfg.team, bots: cfg.bots, loadout: cfg.loadout, model: cfg.look.model, look: effLook(), token }));
     setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'ping', ts: performance.now() })); }, 2000);
   };
   ws.onmessage = wsHandler;
