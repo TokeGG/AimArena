@@ -36,7 +36,7 @@ Voice/text chat, friend-of-friend discovery, party-only ranked ladders, per-mode
 **Between matches:** the party stays together; the room's existing PLAY AGAIN flow applies.
 
 ## 3. Duel mode
-**Mode id:** `duel` (2 players, one per team). Rounds: first to 3 wins (`winRounds = 3`), reusing round, scoreboard, recap and skill-pick logic. Bots fill an empty side at the chosen bot level.
+**Mode id:** `1` (the number of players per team, like 2 and 3; `room.duel === true`; 2 players, one per team). Rounds: first to 3 wins (`winRounds = 3`), reusing round, scoreboard, recap and skill-pick logic. Bots fill an empty side at the chosen bot level.
 **Maps:** two new mirrored small maps, `duel_a`, `duel_b`, flagged `duel: true`, with a centre point. `test/maps.mjs` extended: mirrored walls, 100% reachable, spawns equidistant from centre.
 **Ranked:** allowed; ticket matching as for other team modes; uses the existing rating and Elo.
 **Menu:** 1v1 button added to the mode row; map list filters to duel maps.
